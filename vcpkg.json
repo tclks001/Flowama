@@ -6,6 +6,7 @@
   "dependencies": [
     "sdl3",
     "glm",
-    "fmt"
+    "fmt",
+    "glad"
   ]
 }

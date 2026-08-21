@@ -13,9 +13,13 @@ add_executable(flowama
 find_package(SDL3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(OpenGL REQUIRED)
+find_package(glad CONFIG REQUIRED)
 
 target_link_libraries(flowama PRIVATE
     SDL3::SDL3
     glm::glm
     fmt::fmt
+    OpenGL::GL
+    glad::glad
 )

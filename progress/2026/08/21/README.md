@@ -9,12 +9,16 @@
 - 已运行最小程序，确认输出容器的初始尺寸。
 - 根据上一项目复盘，明确 Agent 默认执行约束：以当前目标的最小实现为准；替代式改动同时删除旧实现与其测试；不主动保留兼容层、历史版本或无关的验证矩阵。
 - 明确文档分工：`docs/` 仅说明当前系统并作为人类入口，`progress/` 保存简短过程与结论，完整演变留在 Git 历史；正式名称使用职责语义而非阶段编号。
+- 接入 SDL3 窗口与 OpenGL 4.6 Core 上下文；使用 GLAD 加载现代 OpenGL 函数，并建立事件循环、像素尺寸 viewport、深蓝色清屏和垂直同步。
+- 解决 VS Code 中 GLAD 头文件的 IntelliSense 误报：由 CMake Tools 向 C/C++ 扩展提供实际 CMake/vcpkg 编译配置；将本机 `.vscode/` 配置加入忽略规则。
 
 ## 验证
 
 - 运行 `scripts/setup.ps1` 后，vcpkg 安装、CMake 配置/生成与 Ninja 构建均成功完成。
 - 运行生成的可执行程序，得到预期的启动输出。
 - 建立 `docs/README.md`，确认当前工程尚未实现 SDL3 窗口或 OpenGL 上下文，并给出后续正式文档的阅读与维护边界。
+- 运行窗口程序，确认深蓝色窗口、正常关闭与 OpenGL `4.6.0 NVIDIA 576.52`、`NVIDIA GeForce RTX 2080/PCIe/SSE2` 输出。
+- 检查已生成的 GLAD 头文件，确认包含 OpenGL 4.3 Compute Shader 与 4.6 API 声明。
 
 ## 下一步
 
