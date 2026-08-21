@@ -9,6 +9,8 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $vcpkgRoot = Join-Path $projectRoot "third_party\vcpkg"
 $vcpkgExe = Join-Path $vcpkgRoot "vcpkg.exe"
 $bootstrapScript = Join-Path $vcpkgRoot "bootstrap-vcpkg.bat"
+$toolchainScript = Join-Path $PSScriptRoot "import-msvc-environment.ps1"
+$buildScript = Join-Path $PSScriptRoot "build.ps1"
 
 Push-Location $projectRoot
 
@@ -22,12 +24,14 @@ try {
         }
     }
 
+    . $toolchainScript
+
     cmake --preset $Preset
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed."
     }
 
-    cmake --build --preset $Preset
+    & $buildScript -Preset $Preset
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed."
     }
