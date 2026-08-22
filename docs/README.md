@@ -11,6 +11,7 @@
 - `scripts/setup.ps1`：首次克隆、修改依赖或 CMake 配置后运行；初始化依赖、配置并构建。
 - `scripts/build.ps1`：日常增量编译；要求对应 preset 已由 setup 配置。
 - `scripts/verify.ps1`：只运行已构建的自动化场景，不会重新配置或编译。
+- [`new-machine-setup.md`](new-machine-setup.md)：新电脑工具链准备、只读环境诊断与 vcpkg 缓存迁移。
 
 ## 推荐阅读顺序
 
