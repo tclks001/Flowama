@@ -16,9 +16,14 @@
 ## 推荐阅读顺序
 
 1. [`../README.md`](../README.md)：项目目标、学习范围和最小运行方式。
-2. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
-3. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1` 与 `src/`。
+2. [`physical-model-and-feasibility.md`](physical-model-and-feasibility.md)：参考视频呈现的物理与光学现象、推荐近似、可行性和验证路线；其中模型尚未实现。
+3. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
+4. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1` 与 `src/`。
 
 ## 后续文档
 
 只有在对应系统已实现且需要反复理解时，才在此建立语义化页面，例如模拟模型、运行时数据流、渲染通路或验证方法。页面应说明当前实现、如何验证和已知限制；被替代的方案及过程细节应写入开发记录或由 Git 历史保存。
+
+## 可调整的工作安排
+
+[`planning/`](planning/) 存放尚未实施的阶段安排和近期工作计划。它与开发记录、当前实现文档分开：其中内容是可依据学习速度、样本测量和实验结果调整的预测，不表示已经完成或确定采用。
