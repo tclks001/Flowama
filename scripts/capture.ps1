@@ -3,6 +3,7 @@ param(
     [int]$Ticks = 720,
     [int]$CaptureEvery = 120,
     [string]$OutputDirectory = "artifacts\captures\single-particle-fall",
+    [string]$MotionTrack = "",
     [string]$Preset = "windows-debug"
 )
 
@@ -34,7 +35,28 @@ else {
     Join-Path $projectRoot $OutputDirectory
 }
 
-& $executable --capture --ticks $Ticks --capture-every $CaptureEvery --output $captureDirectory
+$arguments = @(
+    "--capture",
+    "--ticks", $Ticks,
+    "--capture-every", $CaptureEvery,
+    "--output", $captureDirectory
+)
+if (-not [string]::IsNullOrWhiteSpace($MotionTrack)) {
+    $motionTrackPath = if ([System.IO.Path]::IsPathRooted($MotionTrack)) {
+        $MotionTrack
+    }
+    else {
+        Join-Path $projectRoot $MotionTrack
+    }
+
+    if (-not (Test-Path -LiteralPath $motionTrackPath -PathType Leaf)) {
+        throw "Motion track was not found at '$motionTrackPath'."
+    }
+
+    $arguments += @("--motion-track", $motionTrackPath)
+}
+
+& $executable @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "Capture run failed."
 }

@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目目前可创建 SDL3 窗口与 OpenGL 4.6 Core 上下文，并通过 GLAD 加载 OpenGL 函数。当前最小切片绘制一个 3.6 x 0.2 x 6.0 的三维线框薄盒、重力箭头和一个圆形点精灵粒子；粒子以 120 Hz 固定步长接受阻尼重力，并通过解析六面边界约束留在盒内。右键拖拽绕盒体旋转视角，`R` 重置视角与粒子；本切片特意令重力始终指向当前屏幕下方，尚不是容器运动与非惯性力的真实模型。手动、固定步验证与固定步截图使用同一模拟和渲染核心，但由不同运行驱动执行；验证与截图当前均不注入输入。
+项目目前可创建 SDL3 窗口与 OpenGL 4.6 Core 上下文，并通过 GLAD 加载 OpenGL 函数。当前最小切片绘制一个 3.6 x 0.2 x 6.0 的三维线框薄盒、重力箭头和一个圆形点精灵粒子；粒子以 120 Hz 固定步长接受阻尼重力，并通过解析六面边界约束留在盒内。容器姿态轨迹将固定的世界重力转换到容器局部坐标；左键拖拽操控并记录容器姿态，右键拖拽只绕盒体旋转视角。手动、固定步验证与固定步截图使用同一模拟和渲染核心，但由不同运行驱动执行。
 
 ## 本地入口
 
@@ -18,10 +18,11 @@
 
 1. [`../README.md`](../README.md)：项目目标、学习范围和最小运行方式。
 2. [`three-dimensional-debug-slice.md`](three-dimensional-debug-slice.md)：当前三维薄盒、相机、粒子、OpenGL 绘制和验证数据流。
-3. [`automation-and-capture.md`](automation-and-capture.md)：当前手动、验证和截图运行方式的边界、固定 tick 与 BMP 输出约定。
-4. [`physical-model-and-feasibility.md`](physical-model-and-feasibility.md)：参考视频呈现的物理与光学现象、推荐近似、可行性和验证路线；其中模型尚未实现。
-5. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
-6. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1`、`scripts/capture.ps1` 与 `src/`。
+3. [`container-motion-tracks.md`](container-motion-tracks.md)：容器姿态格式、桌面录制、自动化回放和当前受力范围。
+4. [`automation-and-capture.md`](automation-and-capture.md)：当前手动、验证和截图运行方式的边界、固定 tick 与 BMP 输出约定。
+5. [`physical-model-and-feasibility.md`](physical-model-and-feasibility.md)：参考视频呈现的物理与光学现象、推荐近似、可行性和验证路线；其中模型尚未实现。
+6. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
+7. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1`、`scripts/capture.ps1` 与 `src/`。
 
 ## 后续文档
 

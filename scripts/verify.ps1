@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [int]$Ticks = 120,
+    [string]$MotionTrack = "",
     [string]$Preset = "windows-debug"
 )
 
@@ -17,7 +18,23 @@ if (-not (Test-Path -LiteralPath $executable)) {
     throw "Expected executable was not found at '$executable'. Run scripts/setup.ps1 or scripts/build.ps1 first."
 }
 
-& $executable --verify --ticks $Ticks
+$arguments = @("--verify", "--ticks", $Ticks)
+if (-not [string]::IsNullOrWhiteSpace($MotionTrack)) {
+    $motionTrackPath = if ([System.IO.Path]::IsPathRooted($MotionTrack)) {
+        $MotionTrack
+    }
+    else {
+        Join-Path $projectRoot $MotionTrack
+    }
+
+    if (-not (Test-Path -LiteralPath $motionTrackPath -PathType Leaf)) {
+        throw "Motion track was not found at '$motionTrackPath'."
+    }
+
+    $arguments += @("--motion-track", $motionTrackPath)
+}
+
+& $executable @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "Fixed-tick verification failed."
 }

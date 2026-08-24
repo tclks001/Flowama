@@ -2,15 +2,15 @@
 
 ## 目的与边界
 
-当前项目有三种运行方式。它们共用相机、单粒子模拟和 DebugRenderer；差异只在时间来源、输入来源及每个固定步后的行为。这样手动观感、验证状态和截图序列由同一核心产生，而不在主循环中维护多套物理逻辑。
+当前项目有三种运行方式。它们共用容器姿态、相机、单粒子模拟和 DebugRenderer；差异只在时间来源、容器姿态来源及每个固定步后的行为。这样手动观感、验证状态和截图序列由同一核心产生，而不在主循环中维护多套物理逻辑。
 
 ~~~text
-手动运行      真实时间 + SDL 输入       每帧渲染并呈现窗口
-固定步验证    精确 tick + 无输入         检查状态并退出
-固定步截图    精确 tick + 无输入         在约定 tick 渲染并写 BMP
+手动运行      真实时间 + SDL 容器操控       每帧渲染并呈现窗口，记录姿态轨迹
+固定步验证    精确 tick + 可选姿态轨迹      检查状态并退出
+固定步截图    精确 tick + 可选姿态轨迹      在约定 tick 渲染并写 BMP
 ~~~
 
-当前固定步验证和截图均故意不模拟鼠标、键盘、姿态或移动端输入。规范化输入时间线会在截图路径稳定、且项目所有者理解当前切片后再设计。
+自动化只从姿态轨迹文件读取容器状态，不模拟鼠标、键盘、窗口事件、姿态传感器或移动端输入。轨迹格式和桌面录制方式见 [`container-motion-tracks.md`](container-motion-tracks.md)。
 
 ## 命令行契约
 
@@ -23,6 +23,9 @@
 
 # 固定步截图
 .\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\single-particle-fall
+
+# 使用姿态轨迹的自动化回放
+.\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\tilt-right --motion-track data\motion-tracks\tilt-right.csv
 ~~~
 
 运行时仅接受本节列出的命令行组合。
@@ -35,6 +38,7 @@
 .\scripts\build.ps1
 .\scripts\verify.ps1 -Ticks 720
 .\scripts\capture.ps1 -Ticks 720 -CaptureEvery 120
+.\scripts\capture.ps1 -Ticks 720 -CaptureEvery 120 -MotionTrack data\motion-tracks\tilt-right.csv
 ~~~
 
 capture.ps1 默认输出到 artifacts/captures/single-particle-fall。可通过 -OutputDirectory 指定相对项目根目录或绝对输出目录。artifacts/ 已被 Git 忽略：截图是可重建的本地产物，不应提交。
@@ -65,7 +69,7 @@ RenderFrame       绘制当前 Runtime 状态到 OpenGL 后台缓冲
 RunFixedTicks     为 verify 和 capture 复用精确 tick 循环
 ~~~
 
-手动模式从 SDL 接收事件、以真实帧间隔填充 accumulator，并在每个固定子步调用 AdvanceFixedStep。验证模式在初始状态渲染一次以检查绘制路径，之后只推进固定步并检查粒子没有离开容器。截图模式在 tick 0 和每个可被 CaptureEvery 整除的已完成 tick 调用 RenderFrame 与 BMP 写入。
+手动模式从 SDL 接收事件、以真实帧间隔填充 accumulator，并在每个固定子步调用 AdvanceFixedStep；桌面容器操作会在同一固定步边界写入轨迹。验证模式在初始状态渲染一次以检查绘制路径，之后只推进固定步并检查粒子没有离开容器。截图模式在 tick 0 和每个可被 CaptureEvery 整除的已完成 tick 调用 RenderFrame 与 BMP 写入。自动化提供轨迹时，tick 0 先加载第一个姿态样本。
 
 因此使用 Ticks = 720、CaptureEvery = 120 时会产生：
 
@@ -97,6 +101,6 @@ OpenGL 的像素原点在左下。BMP 使用正高度时也按下到上的行顺
 - verify.ps1 在短程和长程固定 tick 下成功退出。
 - capture.ps1 输出预期数量、命名和尺寸的 BMP 文件。
 - tick 0 与后续 tick 的像素内容不同，且人工查看能确认粒子下落、图像方向正确。
-- capture 不依赖真实帧率、用户输入或可见窗口。
+- capture 不依赖真实帧率、桌面输入或可见窗口；有轨迹时只依赖指定文件的固定 tick 样本。
 
-它尚不比较图像与金图，不输出 PNG，不录制视频，也不模拟任何非桌面输入。
+它尚不比较图像与金图，不输出 PNG，不录制视频，也不模拟移动端或传感器输入。
