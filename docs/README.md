@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目目前可创建 SDL3 窗口与 OpenGL 4.6 Core 上下文，并通过 GLAD 加载 OpenGL 函数。程序会输出实际 OpenGL 版本与渲染器信息并持续清屏；`scripts/verify.ps1` 使用隐藏窗口和关闭垂直同步的自动化模式，运行 120 次渲染循环后自动退出。它暂时不是物理固定步长；着色器、模拟与正式渲染通路尚未实现。
+项目目前可创建 SDL3 窗口与 OpenGL 4.6 Core 上下文，并通过 GLAD 加载 OpenGL 函数。当前最小切片绘制一个 3.6 x 0.2 x 6.0 的三维线框薄盒、重力箭头和一个圆形点精灵粒子；粒子以 120 Hz 固定步长接受阻尼重力，并通过解析六面边界约束留在盒内。右键拖拽绕盒体旋转视角，`R` 重置视角与粒子；本切片特意令重力始终指向当前屏幕下方，尚不是容器运动与非惯性力的真实模型。`scripts/verify.ps1` 使用隐藏窗口和关闭垂直同步的自动化模式，运行指定数量的固定模拟步后退出。
 
 ## 本地入口
 
@@ -16,9 +16,10 @@
 ## 推荐阅读顺序
 
 1. [`../README.md`](../README.md)：项目目标、学习范围和最小运行方式。
-2. [`physical-model-and-feasibility.md`](physical-model-and-feasibility.md)：参考视频呈现的物理与光学现象、推荐近似、可行性和验证路线；其中模型尚未实现。
-3. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
-4. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1` 与 `src/`。
+2. [`three-dimensional-debug-slice.md`](three-dimensional-debug-slice.md)：当前三维薄盒、相机、粒子、OpenGL 绘制和验证数据流。
+3. [`physical-model-and-feasibility.md`](physical-model-and-feasibility.md)：参考视频呈现的物理与光学现象、推荐近似、可行性和验证路线；其中模型尚未实现。
+4. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
+5. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1` 与 `src/`。
 
 ## 后续文档
 
