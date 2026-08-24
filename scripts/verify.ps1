@@ -17,9 +17,9 @@ if (-not (Test-Path -LiteralPath $executable)) {
     throw "Expected executable was not found at '$executable'. Run scripts/setup.ps1 or scripts/build.ps1 first."
 }
 
-& $executable --automation --ticks $Ticks
+& $executable --verify --ticks $Ticks
 if ($LASTEXITCODE -ne 0) {
-    throw "Automation verification failed."
+    throw "Fixed-tick verification failed."
 }
 
-Write-Host "Automation verification passed for $Ticks ticks."
+Write-Host "Fixed-tick verification passed for $Ticks ticks."

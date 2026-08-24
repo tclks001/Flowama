@@ -12,6 +12,9 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -22,9 +25,17 @@ namespace {
 constexpr float kFixedDeltaSeconds = 1.0F / 120.0F;
 constexpr int kMaximumInteractiveSubsteps = 32;
 
+enum class RunMode {
+    Interactive,
+    Verify,
+    Capture,
+};
+
 struct CommandLineOptions {
-    bool automation = false;
+    RunMode mode = RunMode::Interactive;
     int ticks = 0;
+    int captureEvery = 0;
+    std::filesystem::path outputDirectory;
 };
 
 bool ParseCommandLine(
@@ -32,11 +43,49 @@ bool ParseCommandLine(
     char* arguments[],
     CommandLineOptions& options)
 {
+    bool modeSpecified = false;
+
+    const auto selectMode = [&options, &modeSpecified](const RunMode mode) {
+        if (modeSpecified) {
+            fmt::print(stderr, "Only one run mode may be selected.\n");
+            return false;
+        }
+
+        options.mode = mode;
+        modeSpecified = true;
+        return true;
+    };
+
+    const auto parsePositiveInteger = [](const std::string_view optionName,
+                                          const std::string_view valueText,
+                                          int& value) {
+        const auto [end, error] = std::from_chars(
+            valueText.data(),
+            valueText.data() + valueText.size(),
+            value);
+        if (error != std::errc{} || end != valueText.data() + valueText.size()
+            || value <= 0) {
+            fmt::print(stderr, "{} requires a positive integer.\n", optionName);
+            return false;
+        }
+
+        return true;
+    };
+
     for (int index = 1; index < argumentCount; ++index) {
         const std::string_view argument{arguments[index]};
 
-        if (argument == "--automation") {
-            options.automation = true;
+        if (argument == "--verify") {
+            if (!selectMode(RunMode::Verify)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (argument == "--capture") {
+            if (!selectMode(RunMode::Capture)) {
+                return false;
+            }
             continue;
         }
 
@@ -47,14 +96,39 @@ bool ParseCommandLine(
             }
 
             const std::string_view tickText{arguments[++index]};
-            const auto [end, error] = std::from_chars(
-                tickText.data(),
-                tickText.data() + tickText.size(),
-                options.ticks);
+            if (!parsePositiveInteger("--ticks", tickText, options.ticks)) {
+                return false;
+            }
 
-            if (error != std::errc{} || end != tickText.data() + tickText.size()
-                || options.ticks <= 0) {
-                fmt::print(stderr, "--ticks requires a positive integer.\n");
+            continue;
+        }
+
+        if (argument == "--capture-every") {
+            if (index + 1 >= argumentCount) {
+                fmt::print(stderr, "--capture-every requires a positive integer.\n");
+                return false;
+            }
+
+            const std::string_view captureEveryText{arguments[++index]};
+            if (!parsePositiveInteger(
+                    "--capture-every",
+                    captureEveryText,
+                    options.captureEvery)) {
+                return false;
+            }
+
+            continue;
+        }
+
+        if (argument == "--output") {
+            if (index + 1 >= argumentCount) {
+                fmt::print(stderr, "--output requires a directory path.\n");
+                return false;
+            }
+
+            options.outputDirectory = arguments[++index];
+            if (options.outputDirectory.empty()) {
+                fmt::print(stderr, "--output requires a directory path.\n");
                 return false;
             }
 
@@ -65,13 +139,27 @@ bool ParseCommandLine(
         return false;
     }
 
-    if (options.automation && options.ticks == 0) {
-        fmt::print(stderr, "--automation requires --ticks.\n");
+    if (options.mode == RunMode::Interactive
+        && (options.ticks != 0 || options.captureEvery != 0
+            || !options.outputDirectory.empty())) {
+        fmt::print(stderr, "--ticks, --capture-every, and --output require --verify or --capture.\n");
         return false;
     }
 
-    if (!options.automation && options.ticks != 0) {
-        fmt::print(stderr, "--ticks is only valid with --automation.\n");
+    if (options.mode != RunMode::Interactive && options.ticks == 0) {
+        fmt::print(stderr, "--verify and --capture require --ticks.\n");
+        return false;
+    }
+
+    if (options.mode != RunMode::Capture
+        && (options.captureEvery != 0 || !options.outputDirectory.empty())) {
+        fmt::print(stderr, "--capture-every and --output require --capture.\n");
+        return false;
+    }
+
+    if (options.mode == RunMode::Capture
+        && (options.captureEvery == 0 || options.outputDirectory.empty())) {
+        fmt::print(stderr, "--capture requires --capture-every and --output.\n");
         return false;
     }
 
@@ -510,19 +598,40 @@ std::vector<glm::vec3> BuildDebugLines(
     return lines;
 }
 
-} // namespace
+struct Runtime {
+    SDL_Window* window = nullptr;
+    SDL_GLContext context = nullptr;
+    DebugRenderer renderer;
+    OrbitCamera camera;
+    ParticleSimulation simulation;
+    bool sdlInitialized = false;
+    bool rightMouseDragging = false;
+};
 
-int main(int argumentCount, char* arguments[])
+void ShutdownRuntime(Runtime& runtime)
 {
-    CommandLineOptions options;
-    if (!ParseCommandLine(argumentCount, arguments, options)) {
-        return 1;
+    if (runtime.context != nullptr) {
+        runtime.renderer.Destroy();
+        SDL_GL_DestroyContext(runtime.context);
+        runtime.context = nullptr;
     }
+    if (runtime.window != nullptr) {
+        SDL_DestroyWindow(runtime.window);
+        runtime.window = nullptr;
+    }
+    if (runtime.sdlInitialized) {
+        SDL_Quit();
+        runtime.sdlInitialized = false;
+    }
+}
 
+bool InitializeRuntime(Runtime& runtime, const bool hiddenWindow)
+{
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fmt::print(stderr, "SDL_Init failed: {}\n", SDL_GetError());
-        return 1;
+        return false;
     }
+    runtime.sdlInitialized = true;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
@@ -534,50 +643,41 @@ int main(int argumentCount, char* arguments[])
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
     const Uint64 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
-        | (options.automation ? SDL_WINDOW_HIDDEN : 0);
-    SDL_Window* window = SDL_CreateWindow(
+        | (hiddenWindow ? SDL_WINDOW_HIDDEN : 0);
+    runtime.window = SDL_CreateWindow(
         "Flowama - RMB orbit, R reset",
         1280,
         720,
         windowFlags);
-
-    if (window == nullptr) {
+    if (runtime.window == nullptr) {
         fmt::print(stderr, "SDL_CreateWindow failed: {}\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
+        ShutdownRuntime(runtime);
+        return false;
     }
 
-    SDL_GLContext context = SDL_GL_CreateContext(window);
-    if (context == nullptr) {
+    runtime.context = SDL_GL_CreateContext(runtime.window);
+    if (runtime.context == nullptr) {
         fmt::print(stderr, "SDL_GL_CreateContext failed: {}\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
+        ShutdownRuntime(runtime);
+        return false;
     }
 
     if (!gladLoadGLLoader(
             reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress))) {
         fmt::print(stderr, "Failed to load OpenGL functions.\n");
-        SDL_GL_DestroyContext(context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
+        ShutdownRuntime(runtime);
+        return false;
     }
 
-    if (!SDL_GL_SetSwapInterval(options.automation ? 0 : 1)) {
+    if (!SDL_GL_SetSwapInterval(hiddenWindow ? 0 : 1)) {
         fmt::print(stderr, "SDL_GL_SetSwapInterval failed: {}\n", SDL_GetError());
-        SDL_GL_DestroyContext(context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
+        ShutdownRuntime(runtime);
+        return false;
     }
 
-    DebugRenderer renderer;
-    if (!renderer.Create()) {
-        SDL_GL_DestroyContext(context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
+    if (!runtime.renderer.Create()) {
+        ShutdownRuntime(runtime);
+        return false;
     }
 
     glEnable(GL_DEPTH_TEST);
@@ -588,120 +688,313 @@ int main(int argumentCount, char* arguments[])
         "OpenGL: {}\nRenderer: {}\n",
         reinterpret_cast<const char*>(glGetString(GL_VERSION)),
         reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
+    return true;
+}
 
-    OrbitCamera camera;
-    ParticleSimulation simulation;
-    bool running = true;
-    bool rightMouseDragging = false;
-    int completedTicks = 0;
-    bool automationCompleted = false;
-    bool simulationFailed = false;
+bool AdvanceFixedStep(Runtime& runtime)
+{
+    runtime.simulation.Step(runtime.camera.Gravity());
+    if (runtime.simulation.IsInsideContainer()) {
+        return true;
+    }
+
+    fmt::print(stderr, "Particle escaped the container.\n");
+    return false;
+}
+
+bool RenderFrame(Runtime& runtime)
+{
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(runtime.window, &width, &height);
+    glViewport(0, 0, width, height);
+
+    glClearColor(0.025F, 0.04F, 0.075F, 1.0F);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    const glm::mat4 viewProjection = runtime.camera.ViewProjection(width, height);
+    runtime.renderer.DrawLines(
+        viewProjection,
+        BuildDebugLines(runtime.simulation.HalfExtents(), runtime.camera.Gravity()),
+        {0.30F, 0.76F, 0.96F, 1.0F});
+    runtime.renderer.DrawParticle(
+        viewProjection,
+        runtime.simulation.GetParticle().position,
+        {1.0F, 0.72F, 0.22F, 1.0F});
+
+    const GLenum error = glGetError();
+    if (error == GL_NO_ERROR) {
+        return true;
+    }
+
+    fmt::print(stderr, "OpenGL rendering failed with error 0x{:x}.\n", error);
+    return false;
+}
+
+void WriteLittleEndian(
+    std::ofstream& output,
+    const std::uint32_t value,
+    const int byteCount)
+{
+    for (int byteIndex = 0; byteIndex < byteCount; ++byteIndex) {
+        output.put(static_cast<char>((value >> (byteIndex * 8)) & 0xFFU));
+    }
+}
+
+bool WriteBmpFrame(Runtime& runtime, const std::filesystem::path& outputPath)
+{
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(runtime.window, &width, &height);
+    if (width <= 0 || height <= 0) {
+        fmt::print(stderr, "Cannot capture a {} x {} framebuffer.\n", width, height);
+        return false;
+    }
+
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * 3;
+    std::vector<std::uint8_t> pixels(
+        rowBytes * static_cast<std::size_t>(height));
+
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(
+        0,
+        0,
+        width,
+        height,
+        GL_RGB,
+        GL_UNSIGNED_BYTE,
+        pixels.data());
+
+    const GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        fmt::print(stderr, "OpenGL framebuffer readback failed with error 0x{:x}.\n", error);
+        return false;
+    }
+
+    const std::size_t unpaddedRowBytes = static_cast<std::size_t>(width) * 3;
+    const std::size_t paddedRowBytes = (unpaddedRowBytes + 3U) & ~std::size_t{3U};
+    const std::size_t pixelDataSize = paddedRowBytes * static_cast<std::size_t>(height);
+    constexpr std::uint32_t fileHeaderSize = 14;
+    constexpr std::uint32_t infoHeaderSize = 40;
+    const std::uint32_t pixelDataOffset = fileHeaderSize + infoHeaderSize;
+    const std::uint32_t fileSize = pixelDataOffset
+        + static_cast<std::uint32_t>(pixelDataSize);
+
+    std::ofstream output(outputPath, std::ios::binary);
+    if (!output) {
+        fmt::print(stderr, "Failed to open capture output: {}\n", outputPath.string());
+        return false;
+    }
+
+    output.put('B');
+    output.put('M');
+    WriteLittleEndian(output, fileSize, 4);
+    WriteLittleEndian(output, 0, 4);
+    WriteLittleEndian(output, pixelDataOffset, 4);
+    WriteLittleEndian(output, infoHeaderSize, 4);
+    WriteLittleEndian(output, static_cast<std::uint32_t>(width), 4);
+    WriteLittleEndian(output, static_cast<std::uint32_t>(height), 4);
+    WriteLittleEndian(output, 1, 2);
+    WriteLittleEndian(output, 24, 2);
+    WriteLittleEndian(output, 0, 4);
+    WriteLittleEndian(output, static_cast<std::uint32_t>(pixelDataSize), 4);
+    WriteLittleEndian(output, 0, 4);
+    WriteLittleEndian(output, 0, 4);
+    WriteLittleEndian(output, 0, 4);
+    WriteLittleEndian(output, 0, 4);
+
+    std::vector<std::uint8_t> bgrRow(paddedRowBytes, 0);
+    for (int row = 0; row < height; ++row) {
+        const std::size_t sourceOffset = static_cast<std::size_t>(row) * rowBytes;
+        for (int column = 0; column < width; ++column) {
+            const std::size_t sourcePixel = sourceOffset
+                + static_cast<std::size_t>(column) * 3;
+            const std::size_t destinationPixel = static_cast<std::size_t>(column) * 3;
+            bgrRow[destinationPixel] = pixels[sourcePixel + 2];
+            bgrRow[destinationPixel + 1] = pixels[sourcePixel + 1];
+            bgrRow[destinationPixel + 2] = pixels[sourcePixel];
+        }
+        output.write(
+            reinterpret_cast<const char*>(bgrRow.data()),
+            static_cast<std::streamsize>(bgrRow.size()));
+    }
+
+    if (!output) {
+        fmt::print(stderr, "Failed to write capture output: {}\n", outputPath.string());
+        return false;
+    }
+
+    return true;
+}
+
+bool ProcessInteractiveEvents(Runtime& runtime)
+{
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_EVENT_QUIT) {
+            return false;
+        }
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
+            && event.button.button == SDL_BUTTON_RIGHT) {
+            runtime.rightMouseDragging = true;
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP
+            && event.button.button == SDL_BUTTON_RIGHT) {
+            runtime.rightMouseDragging = false;
+        } else if (event.type == SDL_EVENT_MOUSE_MOTION && runtime.rightMouseDragging) {
+            runtime.camera.Rotate(event.motion.xrel, event.motion.yrel);
+        } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_R) {
+            runtime.camera.Reset();
+            runtime.simulation.Reset();
+        }
+    }
+
+    return true;
+}
+
+template <typename AfterTick>
+bool RunFixedTicks(Runtime& runtime, const int tickCount, AfterTick&& afterTick)
+{
+    for (int completedTicks = 1; completedTicks <= tickCount; ++completedTicks) {
+        if (!AdvanceFixedStep(runtime) || !afterTick(completedTicks)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool RunInteractive(Runtime& runtime)
+{
     float accumulatedTime = 0.0F;
     auto previousFrameTime = std::chrono::steady_clock::now();
 
-    while (running) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) {
-                running = false;
-            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
-                && event.button.button == SDL_BUTTON_RIGHT) {
-                rightMouseDragging = true;
-            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP
-                && event.button.button == SDL_BUTTON_RIGHT) {
-                rightMouseDragging = false;
-            } else if (event.type == SDL_EVENT_MOUSE_MOTION && rightMouseDragging) {
-                camera.Rotate(event.motion.xrel, event.motion.yrel);
-            } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_R) {
-                camera.Reset();
-                simulation.Reset();
-                accumulatedTime = 0.0F;
-            }
-        }
-
-        if (!running) {
-            break;
-        }
-
+    while (ProcessInteractiveEvents(runtime)) {
         const auto currentFrameTime = std::chrono::steady_clock::now();
         const float frameDeltaSeconds = std::chrono::duration<float>(
             currentFrameTime - previousFrameTime)
                                             .count();
         previousFrameTime = currentFrameTime;
 
-        if (options.automation) {
-            simulation.Step(camera.Gravity());
-            ++completedTicks;
-        } else {
-            accumulatedTime += std::min(frameDeltaSeconds, 0.25F);
-            int substepCount = 0;
-            while (accumulatedTime >= kFixedDeltaSeconds
-                && substepCount < kMaximumInteractiveSubsteps) {
-                simulation.Step(camera.Gravity());
-                accumulatedTime -= kFixedDeltaSeconds;
-                ++substepCount;
+        accumulatedTime += std::min(frameDeltaSeconds, 0.25F);
+        int substepCount = 0;
+        while (accumulatedTime >= kFixedDeltaSeconds
+            && substepCount < kMaximumInteractiveSubsteps) {
+            if (!AdvanceFixedStep(runtime)) {
+                return false;
             }
-
-            if (substepCount == kMaximumInteractiveSubsteps) {
-                accumulatedTime = 0.0F;
-            }
+            accumulatedTime -= kFixedDeltaSeconds;
+            ++substepCount;
         }
 
-        if (!simulation.IsInsideContainer()) {
-            fmt::print(stderr, "Particle escaped the container.\n");
-            simulationFailed = true;
-            running = false;
-            continue;
+        if (substepCount == kMaximumInteractiveSubsteps) {
+            accumulatedTime = 0.0F;
         }
 
-        int width = 0;
-        int height = 0;
-        SDL_GetWindowSizeInPixels(window, &width, &height);
-        glViewport(0, 0, width, height);
-
-        glClearColor(0.025F, 0.04F, 0.075F, 1.0F);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        const glm::mat4 viewProjection = camera.ViewProjection(width, height);
-        renderer.DrawLines(
-            viewProjection,
-            BuildDebugLines(simulation.HalfExtents(), camera.Gravity()),
-            {0.30F, 0.76F, 0.96F, 1.0F});
-        renderer.DrawParticle(
-            viewProjection,
-            simulation.GetParticle().position,
-            {1.0F, 0.72F, 0.22F, 1.0F});
-
-        SDL_GL_SwapWindow(window);
-
-        if (options.automation && completedTicks == options.ticks) {
-            automationCompleted = true;
-            running = false;
+        if (!RenderFrame(runtime)) {
+            return false;
         }
+        SDL_GL_SwapWindow(runtime.window);
     }
 
-    const Particle finalParticle = simulation.GetParticle();
-    renderer.Destroy();
-    SDL_GL_DestroyContext(context);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    return true;
+}
 
-    if (options.automation) {
-        if (!automationCompleted || simulationFailed) {
-            fmt::print(
-                stderr,
-                "Automation was interrupted after {} ticks.\n",
-                completedTicks);
-            return 1;
-        }
+bool RunVerification(Runtime& runtime, const int tickCount)
+{
+    if (!RenderFrame(runtime)) {
+        return false;
+    }
 
+    if (!RunFixedTicks(runtime, tickCount, [](const int) { return true; })) {
+        return false;
+    }
+
+    const Particle& particle = runtime.simulation.GetParticle();
+    fmt::print(
+        "Verification completed: {} fixed ticks; particle = ({:.3f}, {:.3f}, {:.3f})\n",
+        tickCount,
+        particle.position.x,
+        particle.position.y,
+        particle.position.z);
+    return true;
+}
+
+bool RunCapture(Runtime& runtime, const CommandLineOptions& options)
+{
+    std::error_code directoryError;
+    std::filesystem::create_directories(options.outputDirectory, directoryError);
+    if (directoryError) {
         fmt::print(
-            "Automation completed: {} fixed ticks; particle = ({:.3f}, {:.3f}, {:.3f})\n",
-            completedTicks,
-            finalParticle.position.x,
-            finalParticle.position.y,
-            finalParticle.position.z);
+            stderr,
+            "Failed to create capture directory '{}': {}\n",
+            options.outputDirectory.string(),
+            directoryError.message());
+        return false;
     }
 
-    return simulationFailed ? 1 : 0;
+    int capturedFrames = 0;
+    const auto captureTick = [&runtime, &options, &capturedFrames](const int tick) {
+        if (!RenderFrame(runtime)) {
+            return false;
+        }
+
+        const std::filesystem::path outputPath = options.outputDirectory
+            / fmt::format("tick_{:06}.bmp", tick);
+        if (!WriteBmpFrame(runtime, outputPath)) {
+            return false;
+        }
+
+        ++capturedFrames;
+        return true;
+    };
+
+    if (!captureTick(0)) {
+        return false;
+    }
+
+    if (!RunFixedTicks(runtime, options.ticks, [&captureTick, &options](const int tick) {
+            return tick % options.captureEvery != 0 || captureTick(tick);
+        })) {
+        return false;
+    }
+
+    fmt::print(
+        "Capture completed: {} fixed ticks, {} BMP frames in {}\n",
+        options.ticks,
+        capturedFrames,
+        options.outputDirectory.string());
+    return true;
+}
+
+} // namespace
+
+int main(int argumentCount, char* arguments[])
+{
+    CommandLineOptions options;
+    if (!ParseCommandLine(argumentCount, arguments, options)) {
+        return 1;
+    }
+
+    Runtime runtime;
+    const bool hiddenWindow = options.mode != RunMode::Interactive;
+    if (!InitializeRuntime(runtime, hiddenWindow)) {
+        return 1;
+    }
+
+    bool succeeded = false;
+    switch (options.mode) {
+    case RunMode::Interactive:
+        succeeded = RunInteractive(runtime);
+        break;
+    case RunMode::Verify:
+        succeeded = RunVerification(runtime, options.ticks);
+        break;
+    case RunMode::Capture:
+        succeeded = RunCapture(runtime, options);
+        break;
+    }
+
+    ShutdownRuntime(runtime);
+    return succeeded ? 0 : 1;
 }
