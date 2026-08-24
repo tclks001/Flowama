@@ -25,7 +25,7 @@
 .\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\single-particle-fall
 ~~~
 
-旧的 `--automation` 参数已删除，不保留兼容入口。
+运行时仅接受本节列出的命令行组合。
 
 ## PowerShell 入口
 
