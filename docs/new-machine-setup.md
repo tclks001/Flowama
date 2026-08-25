@@ -7,7 +7,7 @@
 克隆仓库后，先在新的 PowerShell 窗口中运行：
 
 ```powershell
-.\scripts\diagnose-environment.ps1
+.\scripts\tools\diagnose-environment.ps1
 ```
 
 诊断脚本只读取系统、仓库和缓存状态：不会下载、安装、初始化子模块、配置 CMake 或修改任何文件。它检查：
@@ -24,7 +24,7 @@
 可以检查外接盘或共享目录中的缓存，而不改变它们：
 
 ```powershell
-.\scripts\diagnose-environment.ps1 `
+.\scripts\tools\diagnose-environment.ps1 `
     -AssetCachePath E:\FlowamaCache\vcpkg-downloads `
     -BinaryCachePath E:\FlowamaCache\vcpkg-binary
 ```

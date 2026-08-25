@@ -414,56 +414,8 @@ private:
     int nextTick_ = 0;
 };
 
-glm::vec3 RotateVector(
-    const glm::vec3& vector,
-    const float radians,
-    const glm::vec3& axis)
-{
-    return glm::vec3{
-        glm::rotate(glm::mat4{1.0F}, radians, axis) * glm::vec4{vector, 0.0F}};
-}
-
-class OrbitCamera {
+class PresentationCamera {
 public:
-    void Reset()
-    {
-        position_ = {4.8F, -9.0F, 4.5F};
-        upHint_ = {0.0F, 0.0F, 1.0F};
-    }
-
-    void Rotate(const float horizontalPixels, const float verticalPixels)
-    {
-        constexpr float radiansPerPixel = 0.006F;
-
-        const glm::vec3 currentUp = ScreenUp();
-        position_ = RotateVector(
-            position_,
-            -horizontalPixels * radiansPerPixel,
-            currentUp);
-        upHint_ = RotateVector(
-            upHint_,
-            -horizontalPixels * radiansPerPixel,
-            currentUp);
-
-        const glm::vec3 right = Right();
-        const glm::vec3 candidatePosition = RotateVector(
-            position_,
-            -verticalPixels * radiansPerPixel,
-            right);
-        const glm::vec3 candidateUp = RotateVector(
-            upHint_,
-            -verticalPixels * radiansPerPixel,
-            right);
-
-        const float forwardUpAlignment = std::abs(glm::dot(
-            glm::normalize(-candidatePosition),
-            glm::normalize(candidateUp)));
-        if (forwardUpAlignment < 0.995F) {
-            position_ = candidatePosition;
-            upHint_ = candidateUp;
-        }
-    }
-
     [[nodiscard]] glm::mat4 ViewProjection(
         const int width,
         const int height) const
@@ -843,15 +795,15 @@ struct Runtime {
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
     DebugRenderer renderer;
-    OrbitCamera camera;
+    PresentationCamera camera;
     ParticleSimulation simulation;
     ContainerPose containerPose;
+    glm::vec3 displayGravityWorld{0.0F};
     const MotionTrack* motionTrack = nullptr;
     MotionTrackRecorder motionRecorder;
     bool sdlInitialized = false;
     bool recordsMotion = false;
     bool leftMouseDragging = false;
-    bool rightMouseDragging = false;
     int completedTicks = 0;
 };
 
@@ -900,7 +852,7 @@ bool InitializeRuntime(
     const Uint64 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
         | (hiddenWindow ? SDL_WINDOW_HIDDEN : 0);
     runtime.window = SDL_CreateWindow(
-        "Flowama - LMB tilt, RMB orbit, R reset",
+        "Flowama - LMB tilt, R reset",
         1280,
         720,
         windowFlags);
@@ -946,6 +898,7 @@ bool InitializeRuntime(
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glEnable(GL_PROGRAM_POINT_SIZE);
+    runtime.displayGravityWorld = -runtime.camera.ScreenUp() * 9.81F;
 
     fmt::print(
         "OpenGL: {}\nRenderer: {}\n",
@@ -960,10 +913,11 @@ bool InitializeRuntime(
         * glm::mat4_cast(pose.orientationContainerToWorld);
 }
 
-[[nodiscard]] glm::vec3 LocalGravity(const ContainerPose& pose)
+[[nodiscard]] glm::vec3 LocalGravity(
+    const ContainerPose& pose,
+    const glm::vec3& displayGravityWorld)
 {
-    constexpr glm::vec3 worldGravity{0.0F, 0.0F, -9.81F};
-    return glm::inverse(pose.orientationContainerToWorld) * worldGravity;
+    return glm::inverse(pose.orientationContainerToWorld) * displayGravityWorld;
 }
 
 void RotateContainerFromScreenDrag(
@@ -973,10 +927,10 @@ void RotateContainerFromScreenDrag(
 {
     constexpr float radiansPerPixel = 0.006F;
     const glm::quat horizontalRotation = glm::angleAxis(
-        -horizontalPixels * radiansPerPixel,
+        horizontalPixels * radiansPerPixel,
         runtime.camera.ScreenUp());
     const glm::quat verticalRotation = glm::angleAxis(
-        -verticalPixels * radiansPerPixel,
+        verticalPixels * radiansPerPixel,
         runtime.camera.Right());
     runtime.containerPose.orientationContainerToWorld = glm::normalize(
         verticalRotation * horizontalRotation
@@ -1007,7 +961,9 @@ bool AdvanceFixedStep(Runtime& runtime)
         return false;
     }
 
-    runtime.simulation.Step(LocalGravity(runtime.containerPose));
+    runtime.simulation.Step(LocalGravity(
+        runtime.containerPose,
+        runtime.displayGravityWorld));
     if (runtime.simulation.IsInsideContainer()) {
         ++runtime.completedTicks;
         return ApplyMotionTrackSample(runtime, runtime.completedTicks);
@@ -1032,7 +988,9 @@ bool RenderFrame(Runtime& runtime)
         * ContainerToWorldMatrix(runtime.containerPose);
     runtime.renderer.DrawLines(
         modelViewProjection,
-        BuildDebugLines(runtime.simulation.HalfExtents(), LocalGravity(runtime.containerPose)),
+        BuildDebugLines(
+            runtime.simulation.HalfExtents(),
+            LocalGravity(runtime.containerPose, runtime.displayGravityWorld)),
         {0.30F, 0.76F, 0.96F, 1.0F});
     runtime.renderer.DrawParticle(
         modelViewProjection,
@@ -1158,23 +1116,14 @@ bool ProcessInteractiveEvents(Runtime& runtime)
         } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP
             && event.button.button == SDL_BUTTON_LEFT) {
             runtime.leftMouseDragging = false;
-        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN
-            && event.button.button == SDL_BUTTON_RIGHT) {
-            runtime.rightMouseDragging = true;
-        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP
-            && event.button.button == SDL_BUTTON_RIGHT) {
-            runtime.rightMouseDragging = false;
         } else if (event.type == SDL_EVENT_MOUSE_MOTION && runtime.leftMouseDragging) {
             RotateContainerFromScreenDrag(runtime, event.motion.xrel, event.motion.yrel);
-        } else if (event.type == SDL_EVENT_MOUSE_MOTION && runtime.rightMouseDragging) {
-            runtime.camera.Rotate(event.motion.xrel, event.motion.yrel);
         } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_R) {
             if (!runtime.motionRecorder.Finalize(
                     runtime.completedTicks,
                     runtime.containerPose)) {
                 return false;
             }
-            runtime.camera.Reset();
             runtime.simulation.Reset();
             runtime.containerPose = {};
             runtime.completedTicks = 0;

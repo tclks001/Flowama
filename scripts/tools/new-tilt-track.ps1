@@ -10,7 +10,7 @@ if ($Ticks -lt 720) {
     throw "Ticks must be at least 720 so the complete tilt sequence is present."
 }
 
-$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $trackPath = if ([System.IO.Path]::IsPathRooted($OutputPath)) {
     $OutputPath
 }

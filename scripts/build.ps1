@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $cacheFile = Join-Path $projectRoot "build\$Preset\CMakeCache.txt"
-$toolchainScript = Join-Path $PSScriptRoot "import-msvc-environment.ps1"
+$toolchainScript = Join-Path $PSScriptRoot "internal\import-msvc-environment.ps1"
 
 if (-not (Test-Path -LiteralPath $cacheFile)) {
     throw "Build directory for preset '$Preset' is not configured. Run scripts/setup.ps1 first."

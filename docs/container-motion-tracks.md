@@ -8,7 +8,7 @@
 
 ## 文件位置与格式
 
-轨迹使用 UTF-8 兼容的纯文本 CSV，位于 `data/motion-tracks/`。以 `#` 开头的行是注释。每个数据行有八个逗号分隔值：
+轨迹使用 UTF-8 兼容的纯文本 CSV，位于本机的 `data/motion-tracks/`。该目录存放可再生运行数据，已由 Git 忽略；以 `#` 开头的行是注释。每个数据行有八个逗号分隔值：
 
 ~~~text
 # Flowama container motion track
@@ -33,26 +33,25 @@
 
 ## 当前受力与渲染
 
-模拟仍在容器局部坐标中运行，盒壁保持轴对齐。世界重力固定为：
+模拟仍在容器局部坐标中运行，盒壁保持轴对齐。展示相机在创建时固定；程序用它的 `ScreenUp` 一次性确定显示重力：
 
 ~~~text
-worldGravity = (0, 0, -9.81) m/s²
-localGravity = inverse(containerOrientation) * worldGravity
+displayGravityWorld = -presentationCamera.ScreenUp() * 9.81 m/s²
+localGravity = inverse(containerOrientation) * displayGravityWorld
 ~~~
 
-粒子使用 `localGravity` 积分；渲染时，薄盒、粒子和局部重力箭头共同乘以容器的“平移 × 旋转”模型矩阵。于是容器在世界中倾斜，重力箭头仍指向世界向下，而粒子在固定局部盒壁内向新的低侧滑动。
+`displayGravityWorld` 在一次运行内不会变化，且在画面中始终指向屏幕下方。粒子使用 `localGravity` 积分；渲染时，薄盒、粒子和局部重力箭头共同乘以容器的“平移 × 旋转”模型矩阵。于是容器在世界中倾斜，重力箭头保持屏幕向下，而粒子在固定局部盒壁内向新的低侧滑动。
 
-相机只决定观察方向。右键轨道相机不会改变轨迹、世界重力或粒子受力。
+展示相机不接受桌面输入。轨迹、重力和粒子受力均不依赖鼠标观察操作。
 
 ## 桌面录制
 
 手动运行时会自动在 `data/motion-tracks/` 创建一个以本地创建时间命名的 `recorded-YYYYMMDD-HHMMSS.csv` 文件；同一秒再次创建时附加数字后缀。记录器在每个固定步边界写入当前 `ContainerPose`，文件关闭前会补写最终边界样本。
 
-- 左键拖拽：按当前相机的屏幕上、右方向旋转容器；它改变容器姿态和粒子受力。
-- 右键拖拽：旋转轨道相机；它只改变观察视角。
-- R：重置相机、容器和粒子，并开始一条新的姿态轨迹文件。
+- 左键拖拽：按固定展示视图的屏幕上、右方向旋转容器；容器在画面中的旋转方向与拖拽方向一致，它改变容器姿态和粒子受力。
+- R：重置容器和粒子，并开始一条新的姿态轨迹文件。
 
-录制文件是项目数据，不会自动加入 Git 忽略规则。需要把某次手动操作作为可复现测试素材时，可检查其内容、赋予语义化名称并提交；不需要保留的个人试录可自行删除。
+录制文件是本地运行数据，不提交到 Git。需要某条轨迹时，可保留该文件供本机回放；需要一个标准化示例时，使用下文的生成脚本重新创建。
 
 ## 自动化回放
 
@@ -72,10 +71,10 @@ localGravity = inverse(containerOrientation) * worldGravity
 
 ## 示例轨迹
 
-`scripts/new-tilt-track.ps1` 生成一个 720 tick 的示例轨迹：静止、绕世界 Y 轴平滑倾斜到 25 度、保持、平滑回正、再次静止。
+`scripts/tools/new-tilt-track.ps1` 生成一个 720 tick 的示例轨迹：静止、绕世界 Y 轴平滑倾斜到 25 度、保持、平滑回正、再次静止。
 
 ~~~powershell
-.\scripts\new-tilt-track.ps1
+.\scripts\tools\new-tilt-track.ps1
 ~~~
 
 默认输出 `data/motion-tracks/tilt-right.csv`。该轨迹只验证姿态文件、局部重力转换、渲染模型矩阵和固定步回放链路；它不模拟猛晃、流体涡流或惯性效应。

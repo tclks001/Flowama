@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $vcpkgRoot = Join-Path $projectRoot "third_party\vcpkg"
 
 if ([string]::IsNullOrWhiteSpace($AssetCachePath)) {
