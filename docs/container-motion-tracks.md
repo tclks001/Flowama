@@ -40,7 +40,7 @@ displayGravityWorld = -presentationCamera.ScreenUp() * 9.81 m/s²
 localGravity = inverse(containerOrientation) * displayGravityWorld
 ~~~
 
-`displayGravityWorld` 在一次运行内不会变化，且在画面中始终指向屏幕下方。粒子使用 `localGravity` 积分；渲染时，薄盒、粒子和局部重力箭头共同乘以容器的“平移 × 旋转”模型矩阵。于是容器在世界中倾斜，重力箭头保持屏幕向下，而粒子在固定局部盒壁内向新的低侧滑动。
+`displayGravityWorld` 在一次运行内不会变化，且在画面中始终指向屏幕下方。亮粉群使用 `localGravity` 积分；渲染时，薄盒、亮粉和局部重力箭头共同乘以容器的“平移 × 旋转”模型矩阵。于是容器在世界中倾斜，重力箭头保持屏幕向下，而亮粉在固定局部盒壁内向新的低侧滑动和堆积。
 
 展示相机不接受桌面输入。轨迹、重力和粒子受力均不依赖鼠标观察操作。
 

@@ -2,7 +2,7 @@
 param(
     [int]$Ticks = 720,
     [int]$CaptureEvery = 120,
-    [string]$OutputDirectory = "artifacts\captures\single-particle-fall",
+    [string]$OutputDirectory = "artifacts\captures\granular-settling",
     [string]$MotionTrack = "",
     [string]$Preset = "windows-debug"
 )

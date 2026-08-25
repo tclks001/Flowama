@@ -2,7 +2,7 @@
 
 ## 目的与边界
 
-当前项目有三种运行方式。它们共用容器姿态、相机、单粒子模拟和 DebugRenderer；差异只在时间来源、容器姿态来源及每个固定步后的行为。这样手动观感、验证状态和截图序列由同一核心产生，而不在主循环中维护多套物理逻辑。
+当前项目有三种运行方式。它们共用容器姿态、固定展示相机、颗粒模拟和调试渲染器；差异只在时间来源、容器姿态来源及每个固定步后的行为。这样手动观感、验证状态和截图序列由同一核心产生，而不在主循环中维护多套物理逻辑。
 
 ~~~text
 手动运行      真实时间 + SDL 容器操控       每帧渲染并呈现窗口，记录姿态轨迹
@@ -22,7 +22,7 @@
 .\build\windows-debug\flowama.exe --verify --ticks 720
 
 # 固定步截图
-.\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\single-particle-fall
+.\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\granular-settling
 
 # 使用姿态轨迹的自动化回放
 .\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\tilt-right --motion-track data\motion-tracks\tilt-right.csv
@@ -41,7 +41,7 @@
 .\scripts\capture.ps1 -Ticks 720 -CaptureEvery 120 -MotionTrack data\motion-tracks\tilt-right.csv
 ~~~
 
-capture.ps1 默认输出到 artifacts/captures/single-particle-fall。可通过 -OutputDirectory 指定相对项目根目录或绝对输出目录。artifacts/ 已被 Git 忽略：截图是可重建的本地产物，不应提交。
+capture.ps1 默认输出到 artifacts/captures/granular-settling。可通过 -OutputDirectory 指定相对项目根目录或绝对输出目录。artifacts/ 已被 Git 忽略：截图是可重建的本地产物，不应提交。
 
 ### 截图不是录屏格式
 
@@ -53,21 +53,17 @@ capture.ps1 默认输出到 artifacts/captures/single-particle-fall。可通过 
 
 ## 当前代码结构
 
-main 只解析运行模式、初始化 Runtime，并选择一个运行驱动：
+`src/main.cpp` 只调用应用入口。其余当前职责按文件拆分：
 
-~~~text
-RunInteractive
-RunVerification
-RunCapture
-~~~
+| 文件 | 当前职责 |
+| --- | --- |
+| `application.cpp` | 命令行、SDL/OpenGL 生命周期、交互循环、verify、capture 与固定 tick 驱动。 |
+| `container.cpp` | 容器姿态、固定展示相机、局部重力转换与鼠标倾斜。 |
+| `motion_track.cpp` | 姿态轨迹 CSV 的读取与桌面录制。 |
+| `simulation.cpp` | 亮粉初始化、均匀网格、盒壁/粒子接触、位置级摩擦、状态诊断。 |
+| `debug_renderer.cpp` | OpenGL 调试绘制与 BMP 后台缓冲读回。 |
 
-共享核心操作为：
-
-~~~text
-AdvanceFixedStep  推进一个 1 / 120 s 模拟步，并检查粒子边界
-RenderFrame       绘制当前 Runtime 状态到 OpenGL 后台缓冲
-RunFixedTicks     为 verify 和 capture 复用精确 tick 循环
-~~~
+共享核心操作为：`AdvanceFixedStep` 推进一个 1 / 120 s 模拟步，`RenderFrame` 绘制当前 Runtime 状态，`RunFixedTicks` 为 verify 和 capture 复用精确 tick 循环。
 
 手动模式从 SDL 接收事件、以真实帧间隔填充 accumulator，并在每个固定子步调用 AdvanceFixedStep；桌面容器操作会在同一固定步边界写入轨迹。验证模式在初始状态渲染一次以检查绘制路径，之后只推进固定步并检查粒子没有离开容器。截图模式在 tick 0 和每个可被 CaptureEvery 整除的已完成 tick 调用 RenderFrame 与 BMP 写入。自动化提供轨迹时，tick 0 先加载第一个姿态样本。
 

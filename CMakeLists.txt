@@ -7,7 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(flowama
+    src/application.cpp
+    src/container.cpp
+    src/debug_renderer.cpp
     src/main.cpp
+    src/motion_track.cpp
+    src/simulation.cpp
 )
 
 find_package(SDL3 CONFIG REQUIRED)
