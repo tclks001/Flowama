@@ -4,7 +4,7 @@
 
 姿态轨迹是容器的固定步运动学输入。它记录已经解析后的容器世界姿态，不记录鼠标移动、窗口像素、按键事件或相机操作。桌面端和自动化回放都使用同一组 `ContainerPose` 样本，因此回放结果不依赖录制机器的帧率、窗口尺寸或鼠标灵敏度。
 
-当前每个样本包含位置与姿态。位置已参与渲染变换并为未来平移惯性力保留；本切片只由姿态改变局部重力，尚未从位置或姿态差分推导线加速度、角速度、角加速度或非惯性力。
+当前每个样本包含位置与姿态。姿态的相邻固定步差分用于估计容器角速度和角加速度，并驱动干燥容器中的旋转非惯性运动。位置参与渲染变换并为未来平移惯性保留；当前尚未从位置差分推导容器线速度和线加速度，因此物理轨迹应保持容器原点不动。
 
 ## 文件位置与格式
 
@@ -29,7 +29,7 @@
 
 读取器要求 tick 从 `0` 开始且没有缺口，所有数值必须有限，四元数长度必须非零；读取后会归一化四元数。自动化运行 `--ticks T` 时，轨迹必须含有 `0` 到 `T` 的全部样本。
 
-样本 `N` 表示第 `N` 个固定步边界的容器状态：该状态用于渲染 tick `N`，并在区间 `[N, N+1)` 内作为粒子积分的容器姿态。因此轨迹首行在任何渲染和模拟之前直接接管初始容器状态，不会从默认姿态跳变到轨迹姿态。
+样本 `N` 表示第 `N` 个固定步边界的容器状态，并用于渲染 tick `N`。样本 0 在任何渲染和模拟之前直接接管初始容器姿态，不会从默认姿态跳变。推进第 `N` 个固定步前，程序先应用样本 `N`；再以样本 `N-1` 到 `N` 的最短旋转差直接计算本步世界角速度，并以本步与上一步角速度之差计算世界角加速度，最后将两者转换到当前容器局部坐标。姿态、局部重力、角速度、角加速度、粒子受力和渲染都使用同一个 tick 的容器状态；没有跨 tick 的运动学平滑或历史残留。
 
 ## 当前受力与渲染
 
@@ -40,7 +40,16 @@ displayGravityWorld = -presentationCamera.ScreenUp() * 9.81 m/s²
 localGravity = inverse(containerOrientation) * displayGravityWorld
 ~~~
 
-`displayGravityWorld` 在一次运行内不会变化，且在画面中始终指向屏幕下方。亮粉群使用 `localGravity` 积分；渲染时，薄盒、亮粉和局部重力箭头共同乘以容器的“平移 × 旋转”模型矩阵。于是容器在世界中倾斜，重力箭头保持屏幕向下，而亮粉在固定局部盒壁内向新的低侧滑动和堆积。
+`displayGravityWorld` 在一次运行内不会变化，且在画面中始终指向屏幕下方。容器四元数表示局部到世界的旋转 `R`。程序由相邻四元数的最短弧差分得到世界角速度，再将角速度及其差分得到的角加速度转换到当前容器局部坐标。每颗亮粉在局部坐标中的预测加速度为：
+
+~~~text
+a_local = R^-1 g
+          - 2 omega x v
+          - alpha x r
+          - omega x (omega x r)
+~~~
+
+其中后三项依次是科里奥利、欧拉和离心项。没有流体拖曳来强迫亮粉跟随盒体，因此容器加速旋转时，亮粉会表现出相对盒体的惯性滞后；匀速旋转时仍存在科里奥利和离心作用。渲染时，薄盒、亮粉和局部重力箭头共同乘以容器的“平移 × 旋转”模型矩阵，因此盒体在世界中真实转动，而显示重力仍保持屏幕向下。
 
 展示相机不接受桌面输入。轨迹、重力和粒子受力均不依赖鼠标观察操作。
 
@@ -48,7 +57,7 @@ localGravity = inverse(containerOrientation) * displayGravityWorld
 
 手动运行时会自动在 `data/motion-tracks/` 创建一个以本地创建时间命名的 `recorded-YYYYMMDD-HHMMSS.csv` 文件；同一秒再次创建时附加数字后缀。记录器在每个固定步边界写入当前 `ContainerPose`，文件关闭前会补写最终边界样本。
 
-- 左键拖拽：按固定展示视图的屏幕上、右方向旋转容器；容器在画面中的旋转方向与拖拽方向一致，它改变容器姿态和粒子受力。
+- 左键拖拽：按固定展示视图的屏幕上、右方向提交容器旋转增量；最近的 120 Hz 固定步同时应用该增量、记录所得姿态、更新线框并向粒子施加对应的旋转非惯性项。容器在画面中的旋转方向与拖拽方向一致。
 - R：重置容器和粒子，并开始一条新的姿态轨迹文件。
 
 录制文件是本地运行数据，不提交到 Git。需要某条轨迹时，可保留该文件供本机回放；需要一个标准化示例时，使用下文的生成脚本重新创建。
@@ -59,22 +68,22 @@ localGravity = inverse(containerOrientation) * displayGravityWorld
 
 ~~~powershell
 # 由轨迹驱动的固定步状态验证
-.\scripts\verify.ps1 -Ticks 720 -MotionTrack data\motion-tracks\tilt-right.csv
+.\scripts\verify.ps1 -Ticks 960 -MotionTrack data\motion-tracks\dry-rotation.csv
 
 # 由同一轨迹驱动的关键帧截图
-.\scripts\capture.ps1 -Ticks 720 -CaptureEvery 120 `
-    -MotionTrack data\motion-tracks\tilt-right.csv `
-    -OutputDirectory artifacts\captures\tilt-right
+.\scripts\capture.ps1 -Ticks 960 -CaptureEvery 60 `
+    -MotionTrack data\motion-tracks\dry-rotation.csv `
+    -OutputDirectory artifacts\captures\dry-rotation
 ~~~
 
 可执行程序的对应参数是 `--motion-track <文件>`。自动化窗口保持隐藏，不接受 SDL 鼠标、键盘或桌面姿态输入。
 
 ## 示例轨迹
 
-`scripts/tools/new-tilt-track.ps1` 生成一个 720 tick 的示例轨迹：静止、绕世界 Y 轴平滑倾斜到 25 度、保持、平滑回正、再次静止。
+`scripts/tools/new-dry-rotation-track.ps1` 生成一个 960 tick 的示例轨迹：先让亮粉沉降，再绕世界 Y 轴以五次平滑曲线转到 22 度、保持、反向转到 -22 度、保持并回正。五次曲线使每段端点的角速度和角加速度都回到零，避免用不连续的程序输入制造虚假的瞬时冲击。
 
 ~~~powershell
-.\scripts\tools\new-tilt-track.ps1
+.\scripts\tools\new-dry-rotation-track.ps1
 ~~~
 
-默认输出 `data/motion-tracks/tilt-right.csv`。该轨迹只验证姿态文件、局部重力转换、渲染模型矩阵和固定步回放链路；它不模拟猛晃、流体涡流或惯性效应。
+默认输出 `data/motion-tracks/dry-rotation.csv`。该轨迹验证固定步姿态差分、旋转非惯性力、局部重力、渲染模型矩阵和固定步回放链路；它不包含平移惯性、流体拖曳或流体涡流。研究模型本身时仍优先使用导数连续的程序轨迹，以便把输入采样影响与物理行为分开。

@@ -10,6 +10,7 @@ add_executable(flowama
     src/application.cpp
     src/container.cpp
     src/debug_renderer.cpp
+    src/inertial_frame_verification.cpp
     src/main.cpp
     src/motion_track.cpp
     src/simulation.cpp

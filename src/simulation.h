@@ -31,13 +31,24 @@ struct SimulationPerformanceMetrics {
     std::size_t maximumParticlesPerCell = 0;
 };
 
+struct SimulationForces {
+    glm::vec3 gravityLocal{0.0F};
+    glm::vec3 angularVelocityLocal{0.0F};
+    glm::vec3 angularAccelerationLocal{0.0F};
+};
+
+[[nodiscard]] glm::vec3 RotatingFrameAcceleration(
+    const glm::vec3& positionLocal,
+    const glm::vec3& velocityLocal,
+    const SimulationForces& forces);
+
 class GranularSimulation {
 public:
     GranularSimulation();
 
     void Reset();
     void Step(
-        const glm::vec3& gravity,
+        const SimulationForces& forces,
         SimulationPerformanceMetrics* performanceMetrics = nullptr);
 
     [[nodiscard]] const std::vector<glm::vec3>& ParticlePositions() const;
@@ -68,7 +79,7 @@ private:
     glm::vec3 halfExtents_{1.8F, 0.1F, 3.0F};
     float particleRadius_ = 0.025F;
     float particleFriction_ = 0.70F;
-    float wallFriction_ = 0.82F;
+    float wallFriction_ = 0.18F;
     int solverIterations_ = 12;
 
     glm::ivec3 gridDimensions_{0};

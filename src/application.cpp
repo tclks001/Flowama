@@ -2,6 +2,7 @@
 
 #include "container.h"
 #include "debug_renderer.h"
+#include "inertial_frame_verification.h"
 #include "motion_track.h"
 #include "simulation.h"
 
@@ -84,6 +85,8 @@ struct Runtime {
     PresentationCamera camera;
     GranularSimulation simulation;
     ContainerPose containerPose;
+    ContainerMotionEstimator containerMotionEstimator;
+    glm::quat pendingScreenDragRotation{1.0F, 0.0F, 0.0F, 0.0F};
     glm::vec3 displayGravityWorld{0.0F};
     const MotionTrack* motionTrack = nullptr;
     MotionTrackRecorder motionRecorder;
@@ -93,6 +96,8 @@ struct Runtime {
     bool performanceProfilingEnabled = false;
     int performanceProfileStartTick = 0;
     int completedTicks = 0;
+    float maximumAngularSpeed = 0.0F;
+    float maximumAngularAcceleration = 0.0F;
     PerformanceSummary performanceSummary;
 };
 
@@ -246,12 +251,25 @@ void ShutdownRuntime(Runtime& runtime)
     }
 }
 
+bool BeginMotionRecording(Runtime& runtime)
+{
+    if (!runtime.motionRecorder.Begin()) {
+        return false;
+    }
+    if (!runtime.motionRecorder.Record(runtime.completedTicks, runtime.containerPose)) {
+        return false;
+    }
+    runtime.recordsMotion = true;
+    return true;
+}
+
 bool InitializeRuntime(
     Runtime& runtime,
     const bool hiddenWindow,
     const ContainerPose& initialContainerPose)
 {
     runtime.containerPose = initialContainerPose;
+    runtime.containerMotionEstimator.Reset(initialContainerPose);
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fmt::print(stderr, "SDL_Init failed: {}\n", SDL_GetError());
         return false;
@@ -294,11 +312,10 @@ bool InitializeRuntime(
         return false;
     }
     if (!hiddenWindow) {
-        if (!runtime.motionRecorder.Begin()) {
+        if (!BeginMotionRecording(runtime)) {
             ShutdownRuntime(runtime);
             return false;
         }
-        runtime.recordsMotion = true;
     }
 
     glEnable(GL_DEPTH_TEST);
@@ -312,26 +329,31 @@ bool InitializeRuntime(
     return true;
 }
 
-bool ApplyMotionTrackSample(Runtime& runtime, const int tick)
+bool ApplyContainerMotionForNextTick(Runtime& runtime)
 {
-    if (runtime.motionTrack == nullptr) {
+    const int nextTick = runtime.completedTicks + 1;
+    if (runtime.motionTrack != nullptr) {
+        if (!runtime.motionTrack->HasSample(nextTick)) {
+            fmt::print(stderr, "Motion track does not contain tick {}.\n", nextTick);
+            return false;
+        }
+        runtime.containerPose = runtime.motionTrack->Sample(nextTick);
         return true;
     }
-    if (!runtime.motionTrack->HasSample(tick)) {
-        fmt::print(stderr, "Motion track does not contain tick {}.\n", tick);
-        return false;
-    }
-    runtime.containerPose = runtime.motionTrack->Sample(tick);
+
+    runtime.containerPose.orientationContainerToWorld = glm::normalize(
+        runtime.pendingScreenDragRotation * runtime.containerPose.orientationContainerToWorld);
+    runtime.pendingScreenDragRotation = glm::quat{1.0F, 0.0F, 0.0F, 0.0F};
     return true;
 }
 
 bool AdvanceFixedStep(Runtime& runtime)
 {
-    if (!ApplyMotionTrackSample(runtime, runtime.completedTicks)) {
+    if (!ApplyContainerMotionForNextTick(runtime)) {
         return false;
     }
     if (runtime.recordsMotion
-        && !runtime.motionRecorder.Record(runtime.completedTicks, runtime.containerPose)) {
+        && !runtime.motionRecorder.Record(runtime.completedTicks + 1, runtime.containerPose)) {
         return false;
     }
 
@@ -341,8 +363,20 @@ bool AdvanceFixedStep(Runtime& runtime)
     const auto fixedStepStart = profileThisStep
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
+    const ContainerRotationalKinematics kinematics =
+        runtime.containerMotionEstimator.Update(runtime.containerPose, kFixedDeltaSeconds);
+    runtime.maximumAngularSpeed = std::max(
+        runtime.maximumAngularSpeed,
+        glm::length(kinematics.angularVelocityLocal));
+    runtime.maximumAngularAcceleration = std::max(
+        runtime.maximumAngularAcceleration,
+        glm::length(kinematics.angularAccelerationLocal));
     runtime.simulation.Step(
-        LocalGravity(runtime.containerPose, runtime.displayGravityWorld),
+        {
+            LocalGravity(runtime.containerPose, runtime.displayGravityWorld),
+            kinematics.angularVelocityLocal,
+            kinematics.angularAccelerationLocal,
+        },
         profileThisStep ? &simulationMetrics : nullptr);
     if (profileThisStep) {
         runtime.performanceSummary.Add(
@@ -357,7 +391,7 @@ bool AdvanceFixedStep(Runtime& runtime)
     }
 
     ++runtime.completedTicks;
-    return ApplyMotionTrackSample(runtime, runtime.completedTicks);
+    return true;
 }
 
 void FramebufferSize(Runtime& runtime, int& width, int& height)
@@ -408,19 +442,22 @@ bool ProcessInteractiveEvents(Runtime& runtime)
         } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
             runtime.leftMouseDragging = false;
         } else if (event.type == SDL_EVENT_MOUSE_MOTION && runtime.leftMouseDragging) {
-            RotateContainerFromScreenDrag(
-                runtime.containerPose,
+            runtime.pendingScreenDragRotation = ScreenDragRotation(
                 runtime.camera,
                 event.motion.xrel,
-                event.motion.yrel);
+                event.motion.yrel) * runtime.pendingScreenDragRotation;
         } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_R) {
             if (!runtime.motionRecorder.Finalize(runtime.completedTicks, runtime.containerPose)) {
                 return false;
             }
             runtime.simulation.Reset();
             runtime.containerPose = {};
+            runtime.containerMotionEstimator.Reset(runtime.containerPose);
+            runtime.pendingScreenDragRotation = glm::quat{1.0F, 0.0F, 0.0F, 0.0F};
             runtime.completedTicks = 0;
-            if (!runtime.motionRecorder.Begin()) {
+            runtime.maximumAngularSpeed = 0.0F;
+            runtime.maximumAngularAcceleration = 0.0F;
+            if (!BeginMotionRecording(runtime)) {
                 return false;
             }
         }
@@ -476,6 +513,24 @@ bool RunVerification(
     const int tickCount,
     const bool printPerformanceProfile)
 {
+    const InertialFrameVerificationResult inertialFrameResult =
+        VerifyFreeParticleWorldInertia();
+    fmt::print(
+        "Rotating-frame verification: max world position error = {:.6f} m; "
+        "max world velocity error = {:.6f} m/s; angular velocity error = {:.6f} rad/s; "
+        "angular acceleration error = {:.6f} rad/s^2; stopped angular speed = {:.6f} rad/s; "
+        "settled angular acceleration = {:.6f} rad/s^2\n",
+        inertialFrameResult.maximumWorldPositionError,
+        inertialFrameResult.maximumWorldVelocityError,
+        inertialFrameResult.maximumAngularVelocityError,
+        inertialFrameResult.maximumAngularAccelerationError,
+        inertialFrameResult.stoppedAngularSpeed,
+        inertialFrameResult.settledAngularAcceleration);
+    if (!inertialFrameResult.passed) {
+        fmt::print(stderr, "Rotating-frame free-particle verification failed.\n");
+        return false;
+    }
+
     if (!RenderFrame(runtime)
         || !RunFixedTicks(runtime, tickCount, [](const int) { return true; })) {
         return false;
@@ -485,7 +540,8 @@ bool RunVerification(
     const glm::vec3 center = runtime.simulation.CenterOfMass();
     fmt::print(
         "Verification completed: {} fixed ticks; particles = {}; center = ({:.3f}, {:.3f}, {:.3f}); "
-        "max cell occupancy = {}; candidate pairs = {}; overlaps = {}; max penetration = {:.6f}\n",
+        "max cell occupancy = {}; candidate pairs = {}; overlaps = {}; max penetration = {:.6f}; "
+        "peak angular speed = {:.3f} rad/s; peak angular acceleration = {:.3f} rad/s^2\n",
         tickCount,
         runtime.simulation.ParticlePositions().size(),
         center.x,
@@ -494,7 +550,9 @@ bool RunVerification(
         diagnostics.maximumParticlesPerCell,
         diagnostics.candidatePairCount,
         diagnostics.overlappingPairCount,
-        diagnostics.maximumPenetration);
+        diagnostics.maximumPenetration,
+        runtime.maximumAngularSpeed,
+        runtime.maximumAngularAcceleration);
     if (printPerformanceProfile) {
         const PerformanceSummary& profile = runtime.performanceSummary;
         const double tickCountAsDouble = static_cast<double>(profile.fixedStepCount);

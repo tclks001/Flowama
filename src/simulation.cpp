@@ -30,6 +30,18 @@ GranularSimulation::GranularSimulation()
     Reset();
 }
 
+glm::vec3 RotatingFrameAcceleration(
+    const glm::vec3& positionLocal,
+    const glm::vec3& velocityLocal,
+    const SimulationForces& forces)
+{
+    const glm::vec3& angularVelocity = forces.angularVelocityLocal;
+    return forces.gravityLocal
+        - 2.0F * glm::cross(angularVelocity, velocityLocal)
+        - glm::cross(forces.angularAccelerationLocal, positionLocal)
+        - glm::cross(angularVelocity, glm::cross(angularVelocity, positionLocal));
+}
+
 void GranularSimulation::Reset()
 {
     InitializeParticles();
@@ -39,7 +51,7 @@ void GranularSimulation::Reset()
 }
 
 void GranularSimulation::Step(
-    const glm::vec3& gravity,
+    const SimulationForces& forces,
     SimulationPerformanceMetrics* const performanceMetrics)
 {
     diagnostics_ = {};
@@ -52,7 +64,10 @@ void GranularSimulation::Step(
         : std::chrono::steady_clock::time_point{};
     for (GranularParticle& particle : particles_) {
         particle.previousPosition = particle.position;
-        particle.velocity += gravity * kFixedDeltaSeconds;
+        particle.velocity += RotatingFrameAcceleration(
+            particle.position,
+            particle.velocity,
+            forces) * kFixedDeltaSeconds;
         particle.position += particle.velocity * kFixedDeltaSeconds;
     }
     if (performanceMetrics != nullptr) {

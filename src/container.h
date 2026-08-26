@@ -10,6 +10,24 @@ struct ContainerPose {
     glm::quat orientationContainerToWorld{1.0F, 0.0F, 0.0F, 0.0F};
 };
 
+struct ContainerRotationalKinematics {
+    glm::vec3 angularVelocityLocal{0.0F};
+    glm::vec3 angularAccelerationLocal{0.0F};
+};
+
+class ContainerMotionEstimator {
+public:
+    void Reset(const ContainerPose& pose);
+    [[nodiscard]] ContainerRotationalKinematics Update(
+        const ContainerPose& pose,
+        float deltaSeconds);
+
+private:
+    glm::quat previousOrientationContainerToWorld_{1.0F, 0.0F, 0.0F, 0.0F};
+    glm::vec3 previousAngularVelocityWorld_{0.0F};
+    bool initialized_ = false;
+};
+
 class PresentationCamera {
 public:
     [[nodiscard]] glm::mat4 ViewProjection(int width, int height) const;
@@ -27,8 +45,7 @@ private:
 [[nodiscard]] glm::vec3 LocalGravity(
     const ContainerPose& pose,
     const glm::vec3& displayGravityWorld);
-void RotateContainerFromScreenDrag(
-    ContainerPose& pose,
+[[nodiscard]] glm::quat ScreenDragRotation(
     const PresentationCamera& camera,
     float horizontalPixels,
     float verticalPixels);

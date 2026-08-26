@@ -1,13 +1,28 @@
 [CmdletBinding()]
 param(
-    [string]$OutputPath = "data\motion-tracks\tilt-right.csv",
-    [int]$Ticks = 720
+    [string]$OutputPath = "data\motion-tracks\dry-rotation.csv",
+    [int]$Ticks = 960
 )
 
 $ErrorActionPreference = "Stop"
 
-if ($Ticks -lt 720) {
-    throw "Ticks must be at least 720 so the complete tilt sequence is present."
+if ($Ticks -lt 960) {
+    throw "Ticks must be at least 960 so the complete rotation sequence is present."
+}
+
+function Get-QuinticBlend([double]$Value) {
+    return $Value * $Value * $Value * ($Value * ($Value * 6.0 - 15.0) + 10.0)
+}
+
+function Get-BlendedAngle(
+    [int]$Tick,
+    [int]$StartTick,
+    [int]$EndTick,
+    [double]$StartDegrees,
+    [double]$EndDegrees) {
+    $normalizedTime = ($Tick - $StartTick) / [double]($EndTick - $StartTick)
+    $blend = Get-QuinticBlend $normalizedTime
+    return $StartDegrees + ($EndDegrees - $StartDegrees) * $blend
 }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -28,16 +43,20 @@ $lines.Add("# tick,px,py,pz,qx,qy,qz,qw")
 
 for ($tick = 0; $tick -le $Ticks; ++$tick) {
     $angleDegrees = 0.0
-    if ($tick -gt 120 -and $tick -le 240) {
-        $t = ($tick - 120) / 120.0
-        $angleDegrees = 25.0 * $t * $t * (3.0 - 2.0 * $t)
+    if ($tick -gt 240 -and $tick -le 360) {
+        $angleDegrees = Get-BlendedAngle $tick 240 360 0.0 22.0
     }
-    elseif ($tick -gt 240 -and $tick -le 480) {
-        $angleDegrees = 25.0
+    elseif ($tick -gt 360 -and $tick -le 480) {
+        $angleDegrees = 22.0
     }
     elseif ($tick -gt 480 -and $tick -le 600) {
-        $t = ($tick - 480) / 120.0
-        $angleDegrees = 25.0 * (1.0 - $t * $t * (3.0 - 2.0 * $t))
+        $angleDegrees = Get-BlendedAngle $tick 480 600 22.0 -22.0
+    }
+    elseif ($tick -gt 600 -and $tick -le 720) {
+        $angleDegrees = -22.0
+    }
+    elseif ($tick -gt 720 -and $tick -le 840) {
+        $angleDegrees = Get-BlendedAngle $tick 720 840 -22.0 0.0
     }
 
     $halfAngleRadians = $angleDegrees * [Math]::PI / 360.0
@@ -56,4 +75,4 @@ for ($tick = 0; $tick -le $Ticks; ++$tick) {
 }
 
 [System.IO.File]::WriteAllLines($trackPath, $lines)
-Write-Host "Tilt track written to '$trackPath'."
+Write-Host "Dry-container rotation track written to '$trackPath'."

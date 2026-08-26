@@ -25,7 +25,7 @@
 .\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\granular-settling
 
 # 使用姿态轨迹的自动化回放
-.\build\windows-debug\flowama.exe --capture --ticks 720 --capture-every 120 --output artifacts\captures\tilt-right --motion-track data\motion-tracks\tilt-right.csv
+.\build\windows-debug\flowama.exe --capture --ticks 960 --capture-every 60 --output artifacts\captures\dry-rotation --motion-track data\motion-tracks\dry-rotation.csv
 ~~~
 
 运行时仅接受本节列出的命令行组合。
@@ -38,7 +38,7 @@
 .\scripts\build.ps1
 .\scripts\verify.ps1 -Ticks 720
 .\scripts\capture.ps1 -Ticks 720 -CaptureEvery 120
-.\scripts\capture.ps1 -Ticks 720 -CaptureEvery 120 -MotionTrack data\motion-tracks\tilt-right.csv
+.\scripts\capture.ps1 -Ticks 960 -CaptureEvery 60 -MotionTrack data\motion-tracks\dry-rotation.csv
 ~~~
 
 capture.ps1 默认输出到 artifacts/captures/granular-settling。可通过 -OutputDirectory 指定相对项目根目录或绝对输出目录。artifacts/ 已被 Git 忽略：截图是可重建的本地产物，不应提交。
@@ -77,9 +77,10 @@ capture.ps1 默认输出到 artifacts/captures/granular-settling。可通过 -Ou
 | 文件 | 当前职责 |
 | --- | --- |
 | `application.cpp` | 命令行、SDL/OpenGL 生命周期、交互循环、verify、capture 与固定 tick 驱动。 |
-| `container.cpp` | 容器姿态、固定展示相机、局部重力转换与鼠标倾斜。 |
+| `container.cpp` | 容器姿态、固定展示相机、局部重力转换、鼠标倾斜与旋转运动估计。 |
 | `motion_track.cpp` | 姿态轨迹 CSV 的读取与桌面录制。 |
-| `simulation.cpp` | 亮粉初始化、均匀网格、盒壁/粒子接触、位置级摩擦、状态诊断。 |
+| `simulation.cpp` | 亮粉初始化、旋转非惯性加速度、均匀网格、盒壁/粒子接触、位置级摩擦、状态诊断。 |
+| `inertial_frame_verification.cpp` | 无接触自由粒子在旋转坐标系中的世界惯性检查。 |
 | `debug_renderer.cpp` | OpenGL 调试绘制与 BMP 后台缓冲读回。 |
 
 共享核心操作为：`AdvanceFixedStep` 推进一个 1 / 120 s 模拟步，`RenderFrame` 绘制当前 Runtime 状态，`RunFixedTicks` 为 verify 和 capture 复用精确 tick 循环。
