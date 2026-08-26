@@ -22,12 +22,23 @@ struct SimulationDiagnostics {
     float maximumPenetration = 0.0F;
 };
 
+struct SimulationPerformanceMetrics {
+    double predictionMilliseconds = 0.0;
+    double wallConstraintMilliseconds = 0.0;
+    double gridBuildMilliseconds = 0.0;
+    double particleContactMilliseconds = 0.0;
+    std::size_t candidatePairCount = 0;
+    std::size_t maximumParticlesPerCell = 0;
+};
+
 class GranularSimulation {
 public:
     GranularSimulation();
 
     void Reset();
-    void Step(const glm::vec3& gravity);
+    void Step(
+        const glm::vec3& gravity,
+        SimulationPerformanceMetrics* performanceMetrics = nullptr);
 
     [[nodiscard]] const std::vector<glm::vec3>& ParticlePositions() const;
     [[nodiscard]] const glm::vec3& HalfExtents() const;
@@ -42,7 +53,7 @@ private:
     void SynchronizeParticlePositions();
     void BuildGrid();
     void SolveWallConstraints();
-    void SolveParticleContacts();
+    void SolveParticleContacts(SimulationPerformanceMetrics* performanceMetrics);
     void ResolvePairContact(
         std::size_t firstParticle,
         std::size_t secondParticle);

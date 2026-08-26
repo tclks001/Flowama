@@ -43,6 +43,25 @@
 
 capture.ps1 默认输出到 artifacts/captures/granular-settling。可通过 -OutputDirectory 指定相对项目根目录或绝对输出目录。artifacts/ 已被 Git 忽略：截图是可重建的本地产物，不应提交。
 
+## 固定步性能剖析
+
+`scripts/tools/profile.ps1` 运行隐藏窗口的 `--verify --profile`，并输出进程墙钟时间与每个固定 tick 的 CPU 阶段统计：完整固定步、位置预测、盒壁约束、非空网格构建、粒子接触，以及候选对数量和单格占用。它还输出最慢的固定 tick 及其阶段构成。
+
+~~~powershell
+# 静止容器下的 720 tick 基线
+.\scripts\tools\profile.ps1 -Ticks 720
+
+# 回放一条本地录制姿态轨迹
+.\scripts\tools\profile.ps1 -Ticks 4874 `
+    -MotionTrack data\motion-tracks\recorded-20260825-174951.csv
+
+# 保持完整回放，但只统计 tick 4000 至结束的堆积阶段
+.\scripts\tools\profile.ps1 -Ticks 4874 -ProfileStartTick 4000 `
+    -MotionTrack data\motion-tracks\recorded-20260825-174951.csv
+~~~
+
+`-ProfileStartTick` 只跳过此前 tick 的计时，不会跳过模拟：程序仍从 tick 0 回放以得到完全相同的颗粒状态。该工具只在 `--verify` 模式启用，不写截图、不读取桌面鼠标事件，也不测量呈现、交换缓冲、磁盘截图写入或 GPU 实际执行时间。因此它用于回答“固定步 CPU 模拟是否在堆积阶段变贵”，不能单独证明桌面卡顿必然来自模拟；桌面帧时间、GPU 计时和录制文件 I/O 需要在对应问题明确后另行加入。
+
 ### 截图不是录屏格式
 
 当前 BMP 是便于学习和验收的无压缩截图格式，不是正式录屏方案。1280 x 720 的每帧为 2,764,854 bytes（含 BMP 文件头）。在当前 120 Hz 固定步长下，若 `CaptureEvery = 2`，就会以每模拟秒 60 张的频率输出约 166 MB/s（约 158 MiB/s）；720 tick 的运行会生成 361 张图，接近 1 GB。

@@ -34,8 +34,47 @@ struct CommandLineOptions {
     RunMode mode = RunMode::Interactive;
     int ticks = 0;
     int captureEvery = 0;
+    int profileStartTick = 0;
+    bool profile = false;
+    bool profileStartTickSpecified = false;
     std::filesystem::path outputDirectory;
     std::filesystem::path motionTrackPath;
+};
+
+struct PerformanceSummary {
+    std::size_t fixedStepCount = 0;
+    double fixedStepMilliseconds = 0.0;
+    double predictionMilliseconds = 0.0;
+    double wallConstraintMilliseconds = 0.0;
+    double gridBuildMilliseconds = 0.0;
+    double particleContactMilliseconds = 0.0;
+    std::size_t candidatePairCount = 0;
+    std::size_t maximumParticlesPerCell = 0;
+    double maximumFixedStepMilliseconds = 0.0;
+    int slowestCompletedTick = 0;
+    SimulationPerformanceMetrics slowestTickMetrics;
+
+    void Add(
+        const int completedTick,
+        const SimulationPerformanceMetrics& metrics,
+        const double fixedStepElapsedMilliseconds)
+    {
+        ++fixedStepCount;
+        fixedStepMilliseconds += fixedStepElapsedMilliseconds;
+        predictionMilliseconds += metrics.predictionMilliseconds;
+        wallConstraintMilliseconds += metrics.wallConstraintMilliseconds;
+        gridBuildMilliseconds += metrics.gridBuildMilliseconds;
+        particleContactMilliseconds += metrics.particleContactMilliseconds;
+        candidatePairCount += metrics.candidatePairCount;
+        maximumParticlesPerCell = std::max(
+            maximumParticlesPerCell,
+            metrics.maximumParticlesPerCell);
+        if (fixedStepElapsedMilliseconds > maximumFixedStepMilliseconds) {
+            maximumFixedStepMilliseconds = fixedStepElapsedMilliseconds;
+            slowestCompletedTick = completedTick;
+            slowestTickMetrics = metrics;
+        }
+    }
 };
 
 struct Runtime {
@@ -51,7 +90,10 @@ struct Runtime {
     bool sdlInitialized = false;
     bool recordsMotion = false;
     bool leftMouseDragging = false;
+    bool performanceProfilingEnabled = false;
+    int performanceProfileStartTick = 0;
     int completedTicks = 0;
+    PerformanceSummary performanceSummary;
 };
 
 bool ParseCommandLine(
@@ -80,10 +122,27 @@ bool ParseCommandLine(
         }
         return true;
     };
+    const auto parseNonNegativeInteger = [](const std::string_view optionName,
+                                             const std::string_view valueText,
+                                             int& value) {
+        const auto [end, error] = std::from_chars(
+            valueText.data(), valueText.data() + valueText.size(), value);
+        if (error != std::errc{} || end != valueText.data() + valueText.size() || value < 0) {
+            fmt::print(stderr, "{} requires a non-negative integer.\n", optionName);
+            return false;
+        }
+        return true;
+    };
 
     for (int index = 1; index < argumentCount; ++index) {
         const std::string_view argument{arguments[index]};
-        if (argument == "--verify") {
+        if (argument == "--profile") {
+            if (options.profile) {
+                fmt::print(stderr, "--profile may only be specified once.\n");
+                return false;
+            }
+            options.profile = true;
+        } else if (argument == "--verify") {
             if (!selectMode(RunMode::Verify)) {
                 return false;
             }
@@ -100,6 +159,18 @@ bool ParseCommandLine(
             if (!parsePositiveInteger(argument, arguments[++index], value)) {
                 return false;
             }
+        } else if (argument == "--profile-start-tick") {
+            if (index + 1 >= argumentCount) {
+                fmt::print(stderr, "--profile-start-tick requires a non-negative integer.\n");
+                return false;
+            }
+            if (!parseNonNegativeInteger(
+                    argument,
+                    arguments[++index],
+                    options.profileStartTick)) {
+                return false;
+            }
+            options.profileStartTickSpecified = true;
         } else if (argument == "--output" || argument == "--motion-track") {
             if (index + 1 >= argumentCount) {
                 fmt::print(stderr, "{} requires a path.\n", argument);
@@ -137,6 +208,18 @@ bool ParseCommandLine(
     if (options.mode == RunMode::Capture
         && (options.captureEvery == 0 || options.outputDirectory.empty())) {
         fmt::print(stderr, "--capture requires --capture-every and --output.\n");
+        return false;
+    }
+    if (options.profile && options.mode != RunMode::Verify) {
+        fmt::print(stderr, "--profile requires --verify.\n");
+        return false;
+    }
+    if (options.profileStartTickSpecified && !options.profile) {
+        fmt::print(stderr, "--profile-start-tick requires --profile.\n");
+        return false;
+    }
+    if (options.profile && options.profileStartTick >= options.ticks) {
+        fmt::print(stderr, "--profile-start-tick must be smaller than --ticks.\n");
         return false;
     }
     return true;
@@ -252,7 +335,22 @@ bool AdvanceFixedStep(Runtime& runtime)
         return false;
     }
 
-    runtime.simulation.Step(LocalGravity(runtime.containerPose, runtime.displayGravityWorld));
+    const bool profileThisStep = runtime.performanceProfilingEnabled
+        && runtime.completedTicks >= runtime.performanceProfileStartTick;
+    SimulationPerformanceMetrics simulationMetrics;
+    const auto fixedStepStart = profileThisStep
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+    runtime.simulation.Step(
+        LocalGravity(runtime.containerPose, runtime.displayGravityWorld),
+        profileThisStep ? &simulationMetrics : nullptr);
+    if (profileThisStep) {
+        runtime.performanceSummary.Add(
+            runtime.completedTicks + 1,
+            simulationMetrics,
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - fixedStepStart).count());
+    }
     if (!runtime.simulation.IsValidState()) {
         fmt::print(stderr, "Granular simulation produced an invalid particle state.\n");
         return false;
@@ -373,7 +471,10 @@ bool RunInteractive(Runtime& runtime)
     return true;
 }
 
-bool RunVerification(Runtime& runtime, const int tickCount)
+bool RunVerification(
+    Runtime& runtime,
+    const int tickCount,
+    const bool printPerformanceProfile)
 {
     if (!RenderFrame(runtime)
         || !RunFixedTicks(runtime, tickCount, [](const int) { return true; })) {
@@ -394,6 +495,35 @@ bool RunVerification(Runtime& runtime, const int tickCount)
         diagnostics.candidatePairCount,
         diagnostics.overlappingPairCount,
         diagnostics.maximumPenetration);
+    if (printPerformanceProfile) {
+        const PerformanceSummary& profile = runtime.performanceSummary;
+        const double tickCountAsDouble = static_cast<double>(profile.fixedStepCount);
+        fmt::print(
+            "Performance profile: {} ticks from tick {}; fixed step avg = {:.4f} ms; prediction avg = {:.4f} ms; "
+            "wall avg = {:.4f} ms; grid build avg = {:.4f} ms; contact avg = {:.4f} ms; "
+            "candidate pairs avg = {:.1f}; peak cell occupancy = {}\n",
+            profile.fixedStepCount,
+            runtime.performanceProfileStartTick,
+            profile.fixedStepMilliseconds / tickCountAsDouble,
+            profile.predictionMilliseconds / tickCountAsDouble,
+            profile.wallConstraintMilliseconds / tickCountAsDouble,
+            profile.gridBuildMilliseconds / tickCountAsDouble,
+            profile.particleContactMilliseconds / tickCountAsDouble,
+            static_cast<double>(profile.candidatePairCount) / tickCountAsDouble,
+            profile.maximumParticlesPerCell);
+        fmt::print(
+            "Performance peak: tick {}; fixed step = {:.4f} ms; prediction = {:.4f} ms; "
+            "wall = {:.4f} ms; grid build = {:.4f} ms; contact = {:.4f} ms; "
+            "candidate pairs = {}; peak cell occupancy = {}\n",
+            profile.slowestCompletedTick,
+            profile.maximumFixedStepMilliseconds,
+            profile.slowestTickMetrics.predictionMilliseconds,
+            profile.slowestTickMetrics.wallConstraintMilliseconds,
+            profile.slowestTickMetrics.gridBuildMilliseconds,
+            profile.slowestTickMetrics.particleContactMilliseconds,
+            profile.slowestTickMetrics.candidatePairCount,
+            profile.slowestTickMetrics.maximumParticlesPerCell);
+    }
     return true;
 }
 
@@ -470,6 +600,8 @@ bool RunApplication(const int argumentCount, char* arguments[])
 
     Runtime runtime;
     runtime.motionTrack = selectedMotionTrack;
+    runtime.performanceProfilingEnabled = options.profile;
+    runtime.performanceProfileStartTick = options.profileStartTick;
     const bool hiddenWindow = options.mode != RunMode::Interactive;
     if (!InitializeRuntime(runtime, hiddenWindow, initialContainerPose)) {
         return false;
@@ -481,7 +613,7 @@ bool RunApplication(const int argumentCount, char* arguments[])
         succeeded = RunInteractive(runtime);
         break;
     case RunMode::Verify:
-        succeeded = RunVerification(runtime, options.ticks);
+        succeeded = RunVerification(runtime, options.ticks, options.profile);
         break;
     case RunMode::Capture:
         succeeded = RunCapture(runtime, options);

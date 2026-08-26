@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -37,19 +38,48 @@ void GranularSimulation::Reset()
     SynchronizeParticlePositions();
 }
 
-void GranularSimulation::Step(const glm::vec3& gravity)
+void GranularSimulation::Step(
+    const glm::vec3& gravity,
+    SimulationPerformanceMetrics* const performanceMetrics)
 {
     diagnostics_ = {};
+    if (performanceMetrics != nullptr) {
+        *performanceMetrics = {};
+    }
+
+    const auto predictionStart = performanceMetrics != nullptr
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
     for (GranularParticle& particle : particles_) {
         particle.previousPosition = particle.position;
         particle.velocity += gravity * kFixedDeltaSeconds;
         particle.position += particle.velocity * kFixedDeltaSeconds;
     }
+    if (performanceMetrics != nullptr) {
+        performanceMetrics->predictionMilliseconds += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - predictionStart).count();
+    }
 
     for (int iteration = 0; iteration < solverIterations_; ++iteration) {
+        const auto firstWallStart = performanceMetrics != nullptr
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         SolveWallConstraints();
-        SolveParticleContacts();
+        if (performanceMetrics != nullptr) {
+            performanceMetrics->wallConstraintMilliseconds += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - firstWallStart).count();
+        }
+
+        SolveParticleContacts(performanceMetrics);
+
+        const auto secondWallStart = performanceMetrics != nullptr
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         SolveWallConstraints();
+        if (performanceMetrics != nullptr) {
+            performanceMetrics->wallConstraintMilliseconds += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - secondWallStart).count();
+        }
     }
 
     for (GranularParticle& particle : particles_) {
@@ -226,12 +256,25 @@ void GranularSimulation::SolveWallConstraints()
     }
 }
 
-void GranularSimulation::SolveParticleContacts()
+void GranularSimulation::SolveParticleContacts(
+    SimulationPerformanceMetrics* const performanceMetrics)
 {
+    const auto gridBuildStart = performanceMetrics != nullptr
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
     BuildGrid();
+    if (performanceMetrics != nullptr) {
+        performanceMetrics->gridBuildMilliseconds += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - gridBuildStart).count();
+    }
+
     diagnostics_.candidatePairCount = 0;
     diagnostics_.overlappingPairCount = 0;
     diagnostics_.maximumPenetration = 0.0F;
+
+    const auto contactStart = performanceMetrics != nullptr
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
 
     for (const int homeCell : occupiedCells_) {
         const glm::ivec3 homeCoordinates = GridCoordinatesFromIndex(homeCell);
@@ -279,6 +322,15 @@ void GranularSimulation::SolveParticleContacts()
                 }
             }
         }
+    }
+
+    if (performanceMetrics != nullptr) {
+        performanceMetrics->particleContactMilliseconds += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - contactStart).count();
+        performanceMetrics->candidatePairCount += diagnostics_.candidatePairCount;
+        performanceMetrics->maximumParticlesPerCell = std::max(
+            performanceMetrics->maximumParticlesPerCell,
+            diagnostics_.maximumParticlesPerCell);
     }
 }
 
