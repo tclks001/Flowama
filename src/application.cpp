@@ -3,6 +3,8 @@
 #include "container.h"
 #include "debug_renderer.h"
 #include "inertial_frame_verification.h"
+#include "input_timeline.h"
+#include "input_timeline_verification.h"
 #include "motion_track.h"
 #include "simulation.h"
 
@@ -24,6 +26,10 @@ namespace flowama {
 namespace {
 
 constexpr int kMaximumInteractiveSubsteps = 32;
+constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
+// Keep the fixed-step consumer behind typical desktop event delivery so each
+// timestamped rotation segment is available before its interval is simulated.
+constexpr double kInteractiveInputDelaySeconds = 4.0 * kFixedDeltaSeconds;
 
 enum class RunMode {
     Interactive,
@@ -86,7 +92,7 @@ struct Runtime {
     GranularSimulation simulation;
     ContainerPose containerPose;
     ContainerMotionEstimator containerMotionEstimator;
-    glm::quat pendingScreenDragRotation{1.0F, 0.0F, 0.0F, 0.0F};
+    RotationInputTimeline rotationInputTimeline;
     glm::vec3 displayGravityWorld{0.0F};
     const MotionTrack* motionTrack = nullptr;
     MotionTrackRecorder motionRecorder;
@@ -263,6 +269,11 @@ bool BeginMotionRecording(Runtime& runtime)
     return true;
 }
 
+[[nodiscard]] double SecondsFromSdlTimestamp(const Uint64 timestamp)
+{
+    return static_cast<double>(timestamp) / kNanosecondsPerSecond;
+}
+
 bool InitializeRuntime(
     Runtime& runtime,
     const bool hiddenWindow,
@@ -329,7 +340,9 @@ bool InitializeRuntime(
     return true;
 }
 
-bool ApplyContainerMotionForNextTick(Runtime& runtime)
+bool ApplyContainerMotionForNextTick(
+    Runtime& runtime,
+    const glm::quat& desktopRotation)
 {
     const int nextTick = runtime.completedTicks + 1;
     if (runtime.motionTrack != nullptr) {
@@ -342,14 +355,15 @@ bool ApplyContainerMotionForNextTick(Runtime& runtime)
     }
 
     runtime.containerPose.orientationContainerToWorld = glm::normalize(
-        runtime.pendingScreenDragRotation * runtime.containerPose.orientationContainerToWorld);
-    runtime.pendingScreenDragRotation = glm::quat{1.0F, 0.0F, 0.0F, 0.0F};
+        desktopRotation * runtime.containerPose.orientationContainerToWorld);
     return true;
 }
 
-bool AdvanceFixedStep(Runtime& runtime)
+bool AdvanceFixedStep(
+    Runtime& runtime,
+    const glm::quat& desktopRotation = glm::quat{1.0F, 0.0F, 0.0F, 0.0F})
 {
-    if (!ApplyContainerMotionForNextTick(runtime)) {
+    if (!ApplyContainerMotionForNextTick(runtime, desktopRotation)) {
         return false;
     }
     if (runtime.recordsMotion
@@ -439,13 +453,18 @@ bool ProcessInteractiveEvents(Runtime& runtime)
         }
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
             runtime.leftMouseDragging = true;
+            runtime.rotationInputTimeline.BeginDrag(
+                SecondsFromSdlTimestamp(event.button.timestamp));
         } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
             runtime.leftMouseDragging = false;
+            runtime.rotationInputTimeline.EndDrag();
         } else if (event.type == SDL_EVENT_MOUSE_MOTION && runtime.leftMouseDragging) {
-            runtime.pendingScreenDragRotation = ScreenDragRotation(
-                runtime.camera,
-                event.motion.xrel,
-                event.motion.yrel) * runtime.pendingScreenDragRotation;
+            runtime.rotationInputTimeline.AppendRotation(
+                SecondsFromSdlTimestamp(event.motion.timestamp),
+                ScreenDragRotation(
+                    runtime.camera,
+                    event.motion.xrel,
+                    event.motion.yrel));
         } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_R) {
             if (!runtime.motionRecorder.Finalize(runtime.completedTicks, runtime.containerPose)) {
                 return false;
@@ -453,7 +472,11 @@ bool ProcessInteractiveEvents(Runtime& runtime)
             runtime.simulation.Reset();
             runtime.containerPose = {};
             runtime.containerMotionEstimator.Reset(runtime.containerPose);
-            runtime.pendingScreenDragRotation = glm::quat{1.0F, 0.0F, 0.0F, 0.0F};
+            runtime.rotationInputTimeline.Clear();
+            if (runtime.leftMouseDragging) {
+                runtime.rotationInputTimeline.BeginDrag(
+                    SecondsFromSdlTimestamp(event.key.timestamp));
+            }
             runtime.completedTicks = 0;
             runtime.maximumAngularSpeed = 0.0F;
             runtime.maximumAngularAcceleration = 0.0F;
@@ -480,25 +503,33 @@ bool RunFixedTicks(
 
 bool RunInteractive(Runtime& runtime)
 {
-    float accumulatedTime = 0.0F;
-    auto previousFrameTime = std::chrono::steady_clock::now();
+    double accumulatedTimeSeconds = 0.0;
+    double previousSimulationTargetSeconds = SecondsFromSdlTimestamp(SDL_GetTicksNS())
+        - kInteractiveInputDelaySeconds;
+    double simulationTimeSeconds = previousSimulationTargetSeconds;
     while (ProcessInteractiveEvents(runtime)) {
-        const auto currentFrameTime = std::chrono::steady_clock::now();
-        const float frameDeltaSeconds = std::chrono::duration<float>(
-            currentFrameTime - previousFrameTime).count();
-        previousFrameTime = currentFrameTime;
+        const double currentFrameTimeSeconds = SecondsFromSdlTimestamp(SDL_GetTicksNS());
+        const double simulationTargetSeconds = currentFrameTimeSeconds
+            - kInteractiveInputDelaySeconds;
+        const double simulationTargetDeltaSeconds = std::max(
+            0.0,
+            simulationTargetSeconds - previousSimulationTargetSeconds);
+        previousSimulationTargetSeconds = simulationTargetSeconds;
 
-        accumulatedTime += std::min(frameDeltaSeconds, 0.25F);
+        accumulatedTimeSeconds += simulationTargetDeltaSeconds;
         int substepCount = 0;
-        while (accumulatedTime >= kFixedDeltaSeconds && substepCount < kMaximumInteractiveSubsteps) {
-            if (!AdvanceFixedStep(runtime)) {
+        while (accumulatedTimeSeconds >= kFixedDeltaSeconds
+            && substepCount < kMaximumInteractiveSubsteps) {
+            const double nextSimulationTimeSeconds = simulationTimeSeconds + kFixedDeltaSeconds;
+            const glm::quat rotation = runtime.rotationInputTimeline.ConsumeRotation(
+                simulationTimeSeconds,
+                nextSimulationTimeSeconds);
+            if (!AdvanceFixedStep(runtime, rotation)) {
                 return false;
             }
-            accumulatedTime -= kFixedDeltaSeconds;
+            simulationTimeSeconds = nextSimulationTimeSeconds;
+            accumulatedTimeSeconds -= kFixedDeltaSeconds;
             ++substepCount;
-        }
-        if (substepCount == kMaximumInteractiveSubsteps) {
-            accumulatedTime = 0.0F;
         }
         if (!RenderFrame(runtime)) {
             return false;
@@ -513,6 +544,18 @@ bool RunVerification(
     const int tickCount,
     const bool printPerformanceProfile)
 {
+    const InputTimelineVerificationResult inputTimelineResult =
+        VerifyRotationInputTimeline();
+    fmt::print(
+        "Input timeline verification: endpoint rotation error = {:.6f} rad; "
+        "idle rotation = {:.6f} rad\n",
+        inputTimelineResult.endpointRotationErrorRadians,
+        inputTimelineResult.idleRotationRadians);
+    if (!inputTimelineResult.passed) {
+        fmt::print(stderr, "Rotation input timeline verification failed.\n");
+        return false;
+    }
+
     const InertialFrameVerificationResult inertialFrameResult =
         VerifyFreeParticleWorldInertia();
     fmt::print(

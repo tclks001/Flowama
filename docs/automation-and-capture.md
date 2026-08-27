@@ -70,22 +70,11 @@ capture.ps1 默认输出到 artifacts/captures/granular-settling。可通过 -Ou
 
 未来若需要可交付的连续视频，应作为独立能力设计：使用异步像素读回和视频编码器输出 MP4 或 WebM。不要为了当前验证切片提前引入编码器、视频依赖或录屏框架。
 
-## 当前代码结构
+## 固定步执行边界
 
-`src/main.cpp` 只调用应用入口。其余当前职责按文件拆分：
+共享核心操作为：`AdvanceFixedStep` 推进一个 `1 / 120 s` 模拟步，`RenderFrame` 绘制当前运行时状态，`RunFixedTicks` 为 verify 和 capture 复用精确 tick 循环。桌面模式从 SDL 接收带时间戳的旋转增量、以真实帧间隔填充时间池，并让物理时间稳定落后真实时间 4 个 tick；每个固定子步按该步时间区间切分输入后调用 `AdvanceFixedStep`。桌面容器操作会在同一固定步边界写入姿态轨迹。
 
-| 文件 | 当前职责 |
-| --- | --- |
-| `application.cpp` | 命令行、SDL/OpenGL 生命周期、交互循环、verify、capture 与固定 tick 驱动。 |
-| `container.cpp` | 容器姿态、固定展示相机、局部重力转换、鼠标倾斜与旋转运动估计。 |
-| `motion_track.cpp` | 姿态轨迹 CSV 的读取与桌面录制。 |
-| `simulation.cpp` | 亮粉初始化、旋转非惯性加速度、均匀网格、盒壁/粒子接触、位置级摩擦、状态诊断。 |
-| `inertial_frame_verification.cpp` | 无接触自由粒子在旋转坐标系中的世界惯性检查。 |
-| `debug_renderer.cpp` | OpenGL 调试绘制与 BMP 后台缓冲读回。 |
-
-共享核心操作为：`AdvanceFixedStep` 推进一个 1 / 120 s 模拟步，`RenderFrame` 绘制当前 Runtime 状态，`RunFixedTicks` 为 verify 和 capture 复用精确 tick 循环。
-
-手动模式从 SDL 接收事件、以真实帧间隔填充 accumulator，并在每个固定子步调用 AdvanceFixedStep；桌面容器操作会在同一固定步边界写入轨迹。验证模式在初始状态渲染一次以检查绘制路径，之后只推进固定步并检查粒子没有离开容器。截图模式在 tick 0 和每个可被 CaptureEvery 整除的已完成 tick 调用 RenderFrame 与 BMP 写入。自动化提供轨迹时，tick 0 先加载第一个姿态样本。
+验证模式在初始状态渲染一次以检查绘制路径，之后只推进固定步并检查粒子没有离开容器。截图模式在 tick 0 和每个可被 `CaptureEvery` 整除的已完成 tick 调用 `RenderFrame` 与 BMP 写入。自动化提供轨迹时，tick 0 先加载第一个姿态样本。文件职责与相应的实现说明见 [`README.md`](README.md)、[`three-dimensional-debug-slice.md`](three-dimensional-debug-slice.md) 与 [`container-motion-tracks.md`](container-motion-tracks.md)。
 
 因此使用 Ticks = 720、CaptureEvery = 120 时会产生：
 

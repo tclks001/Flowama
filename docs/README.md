@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-项目目前可创建 SDL3 窗口与 OpenGL 4.6 Core 上下文，并通过 GLAD 加载 OpenGL 函数。当前最小切片绘制一个 3.6 x 0.2 x 6.0 的三维线框薄盒、重力箭头和 256 个圆形点精灵亮粉；亮粉在 120 Hz 固定步长下接受重力与容器旋转产生的非惯性作用，通过解析六面盒壁、均匀网格邻域、最小距离约束与位置级摩擦沉降、接触和堆积。固定展示视图在初始化时确定屏幕向下的显示重力；左键拖拽提交旋转增量，固定步将其应用为容器姿态，并从该次真实姿态变化计算角速度和角加速度。手动、固定步验证与固定步截图使用同一模拟和渲染核心，但由不同运行驱动执行。
+项目目前可创建 SDL3 窗口与 OpenGL 4.6 Core 上下文，并通过 GLAD 加载 OpenGL 函数。当前最小切片绘制一个 3.6 x 0.2 x 6.0 的三维线框薄盒、重力箭头和 256 个圆形点精灵亮粉；亮粉在 120 Hz 固定步长下接受重力与容器旋转产生的非惯性作用，通过解析六面盒壁、均匀网格邻域、最小距离约束与位置级摩擦沉降、接触和堆积。固定展示视图在初始化时确定屏幕向下的显示重力；左键拖拽事件被保存为带时间戳的世界旋转增量，并按固定步时间区间以 SLERP 切分为容器姿态，再从该次真实姿态变化计算角速度和角加速度。手动、固定步验证与固定步截图使用同一模拟和渲染核心，但由不同运行驱动执行。
 
 ## 本地入口
 
@@ -19,11 +19,27 @@
 
 1. [`../README.md`](../README.md)：项目目标、学习范围和最小运行方式。
 2. [`three-dimensional-debug-slice.md`](three-dimensional-debug-slice.md)：当前三维薄盒、相机、粒子、OpenGL 绘制和验证数据流。
-3. [`container-motion-tracks.md`](container-motion-tracks.md)：容器姿态格式、桌面录制、自动化回放和当前受力范围。
+3. [`container-motion-tracks.md`](container-motion-tracks.md)：容器姿态格式、桌面录制、时间戳输入切分和自动化回放。
 4. [`automation-and-capture.md`](automation-and-capture.md)：当前手动、验证和截图运行方式的边界、固定 tick 与 BMP 输出约定。
 5. [`physical-model-and-feasibility.md`](physical-model-and-feasibility.md)：参考视频呈现的物理与光学现象、推荐近似、可行性和验证路线；其中模型尚未实现。
 6. [`../progress/README.md`](../progress/README.md)：开发记录的使用方式；最新日记录说明最近完成的工作。
 7. 源码与构建配置：`CMakeLists.txt`、`CMakePresets.json`、`scripts/setup.ps1`、`scripts/build.ps1`、`scripts/verify.ps1`、`scripts/capture.ps1` 与 `src/`。
+
+姿态轨迹页只回答“容器状态如何记录和回放”；三维调试切片页回答“当前容器、受力、颗粒接触和调试绘制如何工作”；自动化页只回答“如何运行、验证、剖析和输出截图”。同一机制的实现说明只保留在其职责页面，避免读者必须在多个页面拼接当前行为。
+
+## 源码入口
+
+`src/main.cpp` 只调用应用入口。需要从源码理解当前系统时，可按职责阅读：
+
+| 文件 | 当前职责 | 对应文档 |
+| --- | --- | --- |
+| `application.cpp` | SDL/OpenGL 生命周期、交互循环、固定步驱动与运行模式。 | 三维调试切片、自动化与截图输出 |
+| `input_timeline.cpp` | 将带时间戳的桌面旋转增量切分到固定步。 | 容器姿态轨迹 |
+| `motion_track.cpp` | 姿态轨迹 CSV 的读取和桌面录制。 | 容器姿态轨迹 |
+| `container.cpp` | 容器姿态、展示相机、重力坐标转换和旋转运动学估计。 | 三维调试切片 |
+| `simulation.cpp` | 旋转非惯性加速度、亮粉接触、堆积和诊断。 | 三维调试切片 |
+| `debug_renderer.cpp` | OpenGL 调试绘制与 BMP 后台缓冲读回。 | 三维调试切片、自动化与截图输出 |
+| `*_verification.cpp` | 输入时间线和无接触旋转参考系的当前回归检查。 | 三维调试切片 |
 
 ## 后续文档
 
